@@ -1,21 +1,19 @@
-﻿# Node / Next.js
-frontend/node_modules/
-frontend/.next/
-frontend/.turbo/
-frontend/.vercel/
-frontend/.env
-frontend/.env.local
-frontend/.env.*
-*.log
-
 # Python
-backend/.venv/
-backend/__pycache__/
-backend/*.sqlite
-backend/.env
-backend/.env.*
+/backend/.venv/
+/backend/__pycache__/
+*.pyc
 
-# General
+# SQLite
+/backend/app.db
+
+# Environment files
+/backend/.env
+/frontend/.env.local
+
+# Node
+/frontend/node_modules/
+/frontend/.next/
+
+# OS junk
 .DS_Store
 Thumbs.db
-.env

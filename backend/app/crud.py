@@ -1,69 +1,54 @@
-# app/crud.py
-from typing import List, Optional
+"""Database access helpers for handovers."""
+from __future__ import annotations
+
 from datetime import datetime
+
+from sqlalchemy import select
 from sqlalchemy.orm import Session
-from sqlalchemy import and_
-from app import models, schemas
 
-# ------------- Create -------------
+from .models import Handover
+from .schemas import HandoverCreate
 
-def create_handover(db: Session, payload: schemas.HandoverCreate) -> models.Handover:
-    data = payload.model_dump()
-    obj = models.Handover(**data)
-    db.add(obj)
+
+def create_handover(db: Session, data: HandoverCreate) -> Handover:
+    """Create and persist a new handover record."""
+
+    handover = Handover(
+        outlet=data.outlet,
+        date=data.date,
+        shift=data.shift,
+        period=data.period,
+        bookings=data.bookings,
+        walk_ins=data.walk_ins,
+        covers=data.covers,
+        food_revenue=data.food_revenue,
+        beverage_revenue=data.beverage_revenue,
+        top_sales=list(data.top_sales),
+    )
+    db.add(handover)
     db.commit()
-    db.refresh(obj)
-    return obj
+    db.refresh(handover)
+    return handover
 
-# ------------- Read -------------
-
-def get_handover(db: Session, handover_id: int) -> Optional[models.Handover]:
-    return db.get(models.Handover, handover_id)
 
 def list_handovers(
     db: Session,
-    outlet: Optional[str] = None,
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    skip: int = 0,
-    limit: int = 50,
-) -> List[models.Handover]:
-    q = db.query(models.Handover)
+    *,
+    outlet: str | None = None,
+    start_date: datetime | None = None,
+    end_date: datetime | None = None,
+) -> list[Handover]:
+    """Return handovers filtered by outlet and date range."""
+
+    stmt = select(Handover)
     if outlet:
-        q = q.filter(models.Handover.outlet == outlet)
+        stmt = stmt.where(Handover.outlet == outlet)
     if start_date:
-        try:
-            sdt = datetime.fromisoformat(start_date)
-            q = q.filter(models.Handover.date >= sdt)
-        except Exception:
-            pass
+        stmt = stmt.where(Handover.date >= start_date)
     if end_date:
-        try:
-            edt = datetime.fromisoformat(end_date)
-            q = q.filter(models.Handover.date <= edt)
-        except Exception:
-            pass
-    return q.order_by(models.Handover.date.desc()).offset(skip).limit(limit).all()
+        stmt = stmt.where(Handover.date <= end_date)
+    stmt = stmt.order_by(Handover.date.desc())
+    return list(db.scalars(stmt))
 
-# ------------- Update -------------
 
-def update_handover(db: Session, handover_id: int, payload: schemas.HandoverUpdate) -> Optional[models.Handover]:
-    obj = db.get(models.Handover, handover_id)
-    if not obj:
-        return None
-    data = payload.model_dump(exclude_unset=True)
-    for k, v in data.items():
-        setattr(obj, k, v)
-    db.commit()
-    db.refresh(obj)
-    return obj
-
-# ------------- Delete -------------
-
-def delete_handover(db: Session, handover_id: int) -> bool:
-    obj = db.get(models.Handover, handover_id)
-    if not obj:
-        return False
-    db.delete(obj)
-    db.commit()
-    return True
+__all__ = ["create_handover", "list_handovers"]

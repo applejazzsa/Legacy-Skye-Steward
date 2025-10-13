@@ -1,40 +1,43 @@
-# app/models.py
-from sqlalchemy import Column, Integer, String, DateTime, Float, JSON
-from sqlalchemy.orm import relationship
-from app.db import Base
+"""SQLAlchemy models for the hospitality domain."""
+from __future__ import annotations
+
+from datetime import datetime
+from typing import List
+
+from sqlalchemy import DateTime, Float, Integer, JSON, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .db import Base
+
 
 class Handover(Base):
-    __tablename__ = "handovers"
+    """Operational handover information for a hospitality outlet."""
 
-    id = Column(Integer, primary_key=True, index=True)
-    outlet = Column(String, index=True, nullable=False)
-    date = Column(DateTime, index=True, nullable=False)
-    shift = Column(String, nullable=True)     # e.g., "AM"/"PM"
-    period = Column(String, nullable=True)    # e.g., "BREAKFAST"/"LUNCH"/"DINNER"
-    bookings = Column(Integer, default=0)
-    walk_ins = Column(Integer, default=0)
-    covers = Column(Integer, default=0)
-    food_revenue = Column(Float, default=0.0)
-    beverage_revenue = Column(Float, default=0.0)
-    # Store as JSON list in SQLite; analytics also supports comma-separated strings
-    top_sales = Column(JSON, nullable=True)
+    __tablename__ = "handover"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    outlet: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    shift: Mapped[str] = mapped_column(String(50), nullable=False)
+    period: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    bookings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    walk_ins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    covers: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    food_revenue: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    beverage_revenue: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    top_sales: Mapped[List[str]] = mapped_column(JSON, nullable=False, default_factory=list)
 
 
 class GuestNote(Base):
-    __tablename__ = "guest_notes"
+    """Compliments and notable guest feedback for staff."""
 
-    id = Column(Integer, primary_key=True, index=True)
-    outlet = Column(String, index=True, nullable=True)
-    staff = Column(String, index=True, nullable=True)
-    sentiment = Column(String, index=True, nullable=True)  # "positive", "neutral", "negative"
-    date = Column(DateTime, index=True, nullable=False)
+    __tablename__ = "guest_note"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    staff: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    note: Mapped[str] = mapped_column(String(500), nullable=False)
+    outlet: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
 
 
-class TopSale(Base):
-    __tablename__ = "top_sales"
-
-    id = Column(Integer, primary_key=True, index=True)
-    outlet = Column(String, index=True, nullable=True)
-    date = Column(DateTime, index=True, nullable=False)
-    item_name = Column(String, index=True, nullable=False)
-    quantity = Column(Integer, default=0)
+__all__ = ["Handover", "GuestNote"]

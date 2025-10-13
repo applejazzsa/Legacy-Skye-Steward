@@ -1,0 +1,28 @@
+### Health Check
+GET http://127.0.0.1:8000/health
+
+### Create Handover
+POST http://127.0.0.1:8000/api/handover
+Content-Type: application/json
+
+{
+  "outlet": "Main Restaurant",
+  "date": "{{datetime 'now' 'Z'}}",
+  "shift": "PM",
+  "period": "DINNER",
+  "bookings": 24,
+  "walk_ins": 10,
+  "covers": 80,
+  "food_revenue": 5200.75,
+  "beverage_revenue": 2100.25,
+  "top_sales": ["Chef's Special", "Signature Cocktail"]
+}
+
+### KPI Summary
+GET http://127.0.0.1:8000/api/analytics/kpi-summary?target=10000
+
+### Top Items
+GET http://127.0.0.1:8000/api/analytics/top-items?limit=5
+
+### Staff Praise
+GET http://127.0.0.1:8000/api/analytics/staff-praise?limit=5
