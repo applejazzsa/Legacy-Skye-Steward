@@ -1,10 +1,21 @@
-# app/deps.py
-from typing import Generator
-from app.db import SessionLocal
+"""Dependency helpers for FastAPI routes."""
+from __future__ import annotations
 
-def get_db() -> Generator:
-    db = SessionLocal()
+from collections.abc import Generator
+
+from sqlalchemy.orm import Session
+
+from .db import get_session
+
+
+def get_db() -> Generator[Session, None, None]:
+    """Yield a database session and ensure cleanup."""
+
+    session = get_session()
     try:
-        yield db
+        yield session
     finally:
-        db.close()
+        session.close()
+
+
+__all__ = ["get_db"]

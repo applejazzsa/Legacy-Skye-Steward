@@ -1,14 +1,17 @@
-export const metadata = {
-  title: "Legacy Skye Steward",
-  description: "Operational dashboard"
-};
-
+import type { Metadata } from "next";
 import "./globals.css";
+
+export const metadata: Metadata = {
+  title: "Legacy Skye Steward Dashboard",
+  description: "Hospitality handover & analytics overview",
+};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>{children}</body>
+      <body className="antialiased">
+        {children}
+      </body>
     </html>
   );
 }

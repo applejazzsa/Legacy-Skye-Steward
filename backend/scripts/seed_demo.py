@@ -1,126 +1,92 @@
-# scripts/seed_demo.py
-# Robust path bootstrap so we can import "app" regardless of how this file is called.
-import os
-import sys
-from datetime import datetime, timedelta, time, timezone
+"""Seed the database with demo data."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from random import randint
+
 from sqlalchemy.orm import Session
 
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-BACKEND_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
-if BACKEND_ROOT not in sys.path:
-    sys.path.insert(0, BACKEND_ROOT)
-
-from app.db import SessionLocal, engine, Base
-from app import models
+from app.db import Base, engine, get_session
+from app.models import GuestNote, Handover
 
 
-def dt_at(d, hh, mm, ss=0):
-    """Create a timezone-aware UTC datetime for date d at hh:mm:ss."""
-    return datetime.combine(d, time(hh, mm, ss, tzinfo=timezone.utc))
+def ensure_schema() -> None:
+    """Create tables if they are missing."""
 
-
-def seed():
-    # Ensure tables exist
     Base.metadata.create_all(bind=engine)
 
-    db: Session = SessionLocal()
+
+def seed_handovers(session: Session) -> None:
+    now = datetime.now(timezone.utc)
+    outlets = ["Main Restaurant", "Lobby Bar"]
+
+    demo_records: list[Handover] = []
+    for day_offset in range(3, 0, -1):
+        for outlet in outlets:
+            base_date = now - timedelta(days=day_offset)
+            shift = "AM" if outlet == "Main Restaurant" else "PM"
+            period = "BREAKFAST" if shift == "AM" else "DINNER"
+            handover = Handover(
+                outlet=outlet,
+                date=base_date.replace(
+                    hour=8 if shift == "AM" else 19,
+                    minute=0,
+                    second=0,
+                    microsecond=0,
+                ),
+                shift=shift,
+                period=period,
+                bookings=randint(10, 40),
+                walk_ins=randint(5, 25),
+                covers=randint(40, 120),
+                food_revenue=round(randint(2000, 8000) + randint(0, 99) / 100, 2),
+                beverage_revenue=round(randint(800, 3500) + randint(0, 99) / 100, 2),
+                top_sales=[
+                    "Chef's Special",
+                    "Signature Cocktail" if outlet == "Lobby Bar" else "Tasting Menu",
+                    "Seasonal Dessert",
+                ],
+            )
+            demo_records.append(handover)
+    session.add_all(demo_records)
+
+
+def seed_guest_notes(session: Session) -> None:
+    base_time = datetime.now(timezone.utc) - timedelta(days=1)
+    notes = [
+        GuestNote(
+            date=base_time - timedelta(hours=6),
+            staff="Alex Kim",
+            note="Guests praised attentive wine pairing recommendations.",
+            outlet="Main Restaurant",
+        ),
+        GuestNote(
+            date=base_time - timedelta(hours=3),
+            staff="Jamie Rivera",
+            note="Birthday party commended the cocktail flair show.",
+            outlet="Lobby Bar",
+        ),
+        GuestNote(
+            date=base_time - timedelta(hours=1),
+            staff="Morgan Patel",
+            note="VIP appreciated the personalized dessert inscription.",
+            outlet="Main Restaurant",
+        ),
+    ]
+    session.add_all(notes)
+
+
+def main() -> None:
+    ensure_schema()
+    session = get_session()
     try:
-        # Clear existing data (demo only)
-        db.query(models.GuestNote).delete()
-        db.query(models.Incident).delete()
-        db.query(models.Handover).delete()
-        db.commit()
-
-        today = datetime.now(timezone.utc).date()
-        days = [today - timedelta(days=i) for i in range(6, -1, -1)]  # last 7 days (Mon-Sun style window)
-
-        outlets = ["Cafe Grill", "Leopard Bar", "Azure", "Spa"]
-        periods = [
-            models.MealPeriodEnum.BREAKFAST,
-            models.MealPeriodEnum.LUNCH,
-            models.MealPeriodEnum.DINNER,
-        ]
-
-        # ---------------------------
-        # Handovers (7 days × 4 outlets × 3 periods)
-        # ---------------------------
-        for d in days:
-            for out in outlets:
-                for p in periods:
-                    shift = (
-                        models.ShiftEnum.AM if p == models.MealPeriodEnum.BREAKFAST
-                        else models.ShiftEnum.PM if p == models.MealPeriodEnum.DINNER
-                        else (models.ShiftEnum.AM if (d.day + len(out)) % 2 == 0 else models.ShiftEnum.PM)
-                    )
-                    hov = models.Handover(
-                        outlet=out,
-                        date=dt_at(d, 9, 0) if shift == models.ShiftEnum.AM else dt_at(d, 18, 0),
-                        shift=shift,
-                        period=p,
-                        bookings=10 + (d.day % 5),
-                        walk_ins=5 + (len(out) % 4),
-                        covers=25 + (d.day % 10),
-                        food_revenue=8000 + (d.day % 7) * 900,
-                        beverage_revenue=600 + (d.day % 6) * 120,
-                        top_sales_csv="Beef Fillet,Atlantic Platter" if out != "Spa" else ""
-                    )
-                    db.add(hov)
-
-        # ---------------------------
-        # Incidents (use timedelta, not day-1)
-        # ---------------------------
-        inc_today = today
-        inc_yesterday = today - timedelta(days=1)
-
-        db.add_all([
-            models.Incident(
-                outlet="Azure",
-                date=dt_at(inc_today, 20, 15),
-                description="Child choked due to unblended veg; assisted promptly.",
-                severity=models.SeverityEnum.HIGH,
-                owner="Duty Manager",
-                status=models.IncidentStatusEnum.OPEN,
-                guest_reference="Room 209"
-            ),
-            models.Incident(
-                outlet="Leopard Bar",
-                date=dt_at(inc_yesterday, 16, 45),
-                description="Scones slightly stale; replaced immediately and comped tea.",
-                severity=models.SeverityEnum.MEDIUM,
-                owner="F&B Supervisor",
-                status=models.IncidentStatusEnum.RESOLVED,
-                action_taken="Replaced; QA check on batch."
-            ),
-        ])
-
-        # ---------------------------
-        # Guest notes (also timedelta-safe)
-        # ---------------------------
-        db.add_all([
-            models.GuestNote(
-                outlet="Leopard Bar",
-                date=dt_at(inc_today, 15, 30),
-                guest_name="Private",
-                occasion="Anniversary",
-                note="Loved High Tea and cocktails; praised Nolundi.",
-                sentiment=models.SentimentEnum.VERY_HAPPY,
-                staff_praised="Nolundi"
-            ),
-            models.GuestNote(
-                outlet="Spa",
-                date=dt_at(today - timedelta(days=2), 11, 0),
-                guest_name=None,
-                note="Complimented Jade’s healing hands.",
-                sentiment=models.SentimentEnum.HAPPY,
-                staff_praised="Jade"
-            ),
-        ])
-
-        db.commit()
-        print("✅ Demo data seeded.")
+        seed_handovers(session)
+        seed_guest_notes(session)
+        session.commit()
+        print("Seed data inserted successfully.")
     finally:
-        db.close()
+        session.close()
 
 
 if __name__ == "__main__":
-    seed()
+    main()

@@ -1,107 +1,143 @@
-# app/main.py
-from datetime import datetime
-from typing import List, Optional
+"""FastAPI application entry point."""
+from __future__ import annotations
 
-from fastapi import FastAPI, Depends, HTTPException, Query
+from datetime import datetime, timezone
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-from app.deps import get_db
-from app import models, crud, schemas
-from app.db import engine, Base
-from app.analytics import top_items, staff_praise, kpi_summary
-
-# create tables (dev)
-Base.metadata.create_all(bind=engine)
+from . import analytics, crud
+from .config import get_cors_origins
+from .deps import get_db
+from .schemas import HandoverCreate, HandoverRead, KPISummary
 
 app = FastAPI(
     title="Legacy Skye Steward API",
-    version="0.1.0",
-    openapi_url="/openapi.json",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    version="1.0.0",
+    openapi_tags=[
+        {"name": "Health", "description": "Health checks for uptime monitoring."},
+        {
+            "name": "Handovers",
+            "description": "Create and query hospitality handover information.",
+        },
+        {
+            "name": "Analytics",
+            "description": "Aggregated insights for leadership dashboards.",
+        },
+    ],
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-@app.get("/")
-def root():
-    return {"status": "ok", "service": "Legacy Skye Steward API"}
 
-@app.get("/health")
-def health():
-    return {"status": "healthy", "time": datetime.utcnow().isoformat()}
+@app.get("/health", tags=["Health"])
+def health() -> dict[str, str]:
+    """Return a simple readiness check."""
 
-# ---- Handover CRUD ----
+    now = datetime.now(timezone.utc)
+    return {
+        "status": "healthy",
+        "time": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
 
-@app.post("/api/handover", response_model=schemas.HandoverRead)
-def create_handover(payload: schemas.HandoverCreate, db: Session = Depends(get_db)):
-    return crud.create_handover(db, payload)
 
-@app.get("/api/handover/{handover_id}", response_model=schemas.HandoverRead)
-def read_handover(handover_id: int, db: Session = Depends(get_db)):
-    item = crud.get_handover(db, handover_id)
-    if not item:
-        raise HTTPException(status_code=404, detail="Handover not found")
-    return item
+@app.post("/api/handover", response_model=HandoverRead, tags=["Handovers"])
+def create_handover(
+    payload: HandoverCreate,
+    db: Annotated[Session, Depends(get_db)],
+) -> HandoverRead:
+    """Create a new handover entry."""
 
-@app.get("/api/handover", response_model=List[schemas.HandoverRead])
-def list_handovers(
-    outlet: Optional[str] = None,
-    start_date: Optional[str] = Query(None, description="ISO date e.g. 2025-09-01"),
-    end_date: Optional[str] = Query(None, description="ISO date e.g. 2025-09-30"),
-    skip: int = 0,
-    limit: int = 50,
-    db: Session = Depends(get_db),
-):
-    return crud.list_handovers(db, outlet=outlet, start_date=start_date, end_date=end_date, skip=skip, limit=limit)
+    handover = crud.create_handover(db, payload)
+    return HandoverRead.model_validate(handover)
 
-@app.put("/api/handover/{handover_id}", response_model=schemas.HandoverRead)
-def update_handover(handover_id: int, payload: schemas.HandoverUpdate, db: Session = Depends(get_db)):
-    updated = crud.update_handover(db, handover_id, payload)
-    if not updated:
-        raise HTTPException(status_code=404, detail="Handover not found")
-    return updated
 
-@app.delete("/api/handover/{handover_id}")
-def delete_handover(handover_id: int, db: Session = Depends(get_db)):
-    ok = crud.delete_handover(db, handover_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="Handover not found")
-    return {"deleted": True, "id": handover_id}
+@app.get("/api/handover", response_model=list[HandoverRead], tags=["Handovers"])
+def list_handover(
+    *,
+    outlet: str | None = None,
+    start_date: str | None = Query(None, description="Inclusive ISO8601 start date."),
+    end_date: str | None = Query(None, description="Inclusive ISO8601 end date."),
+    db: Annotated[Session, Depends(get_db)],
+) -> list[HandoverRead]:
+    """List handovers optionally filtered by outlet and date range."""
 
-# ---- Analytics (uses app.deps.get_db) ----
+    start = analytics.parse_iso_datetime(start_date)
+    end = analytics.parse_iso_datetime(end_date)
+    if start and end and start > end:
+        raise HTTPException(status_code=400, detail="start_date cannot be after end_date")
 
-@app.get("/api/analytics/top-items")
-def analytics_top_items(
-    start_date: str | None = Query(None, description="ISO date/time"),
-    end_date: str | None = Query(None, description="ISO date/time"),
+    handovers = crud.list_handovers(db, outlet=outlet, start_date=start, end_date=end)
+    return [HandoverRead.model_validate(h) for h in handovers]
+
+
+@app.get("/api/analytics/top-items", tags=["Analytics"])
+def top_items(
     limit: int = Query(5, ge=1, le=50),
     outlet: str | None = None,
-    db: Session = Depends(get_db),
-):
-    return top_items(db, start_date, end_date, limit=limit, outlet=outlet)
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: Annotated[Session, Depends(get_db)],
+) -> list[dict[str, str | int]]:
+    """Return the most popular top sales items for the period."""
 
-@app.get("/api/analytics/staff-praise")
-def analytics_staff_praise(
-    start_date: str | None = Query(None, description="ISO date/time"),
-    end_date: str | None = Query(None, description="ISO date/time"),
+    start, end = analytics.normalize_window(
+        analytics.parse_iso_datetime(start_date),
+        analytics.parse_iso_datetime(end_date),
+    )
+    return analytics.top_items(db, start=start, end=end, outlet=outlet, limit=limit)
+
+
+@app.get("/api/analytics/staff-praise", tags=["Analytics"])
+def staff_praise(
     limit: int = Query(5, ge=1, le=50),
     outlet: str | None = None,
-    db: Session = Depends(get_db),
-):
-    return staff_praise(db, start_date, end_date, limit=limit, outlet=outlet)
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: Annotated[Session, Depends(get_db)],
+) -> list[dict[str, str | int]]:
+    """Return the staff praise leaderboard."""
 
-@app.get("/api/analytics/kpi-summary")
-def analytics_kpi_summary(
-    target: str | None = Query(None, description="Optional total revenue target as number string"),
+    start, end = analytics.normalize_window(
+        analytics.parse_iso_datetime(start_date),
+        analytics.parse_iso_datetime(end_date),
+    )
+    return analytics.staff_praise(db, start=start, end=end, outlet=outlet, limit=limit)
+
+
+@app.get("/api/analytics/kpi-summary", response_model=KPISummary, tags=["Analytics"])
+def kpi_summary(
+    target: float = Query(..., description="Revenue target for the window."),
     outlet: str | None = None,
-    db: Session = Depends(get_db),
-):
-    return kpi_summary(db, target=target, outlet=outlet)
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: Annotated[Session, Depends(get_db)],
+) -> KPISummary:
+    """Return KPI summary for the requested period."""
+
+    start, end = analytics.normalize_window(
+        analytics.parse_iso_datetime(start_date),
+        analytics.parse_iso_datetime(end_date),
+    )
+    summary = analytics.kpi_summary(
+        db,
+        start=start,
+        end=end,
+        outlet=outlet,
+        target=target,
+    )
+    # Ensure datetime values serialize with trailing Z.
+    summary["window"]["start"] = summary["window"]["start"].isoformat().replace("+00:00", "Z")
+    summary["window"]["end"] = summary["window"]["end"].isoformat().replace("+00:00", "Z")
+    return KPISummary.model_validate(summary)
+
+
+__all__ = ["app"]

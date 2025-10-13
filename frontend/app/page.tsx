@@ -1,73 +1,97 @@
-import { getKpiSummary, getTopItems, getStaffPraise } from "@/lib/api";
+import KpiCard from "../components/KpiCard";
+import ListCard from "../components/ListCard";
+import HandoversTable from "../components/HandoversTable";
+import {
+  fetchHandovers,
+  fetchKpiSummary,
+  fetchStaffPraise,
+  fetchTopItems,
+} from "../lib/api";
 
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-2xl border p-4 shadow-sm bg-white">
-      <div className="text-sm text-gray-500">{label}</div>
-      <div className="text-2xl font-semibold">{value}</div>
-    </div>
-  );
-}
+const KPI_TARGET = 10000;
 
-export default async function Page() {
-  const [kpi, topItems, praise] = await Promise.all([
-    getKpiSummary(10000),
-    getTopItems(10),
-    getStaffPraise(10),
+export default async function DashboardPage() {
+  const [kpiSummary, topItems, staffPraise, handovers] = await Promise.all([
+    fetchKpiSummary(KPI_TARGET),
+    fetchTopItems(5),
+    fetchStaffPraise(5),
+    fetchHandovers(10),
   ]);
 
+  const kpiCards = [
+    {
+      title: "Total Revenue",
+      current: kpiSummary.current.total_revenue,
+      previous: kpiSummary.previous.total_revenue,
+      change: kpiSummary.change_pct.total_revenue,
+      format: "currency" as const,
+    },
+    {
+      title: "Covers",
+      current: kpiSummary.current.covers,
+      previous: kpiSummary.previous.covers,
+      change: kpiSummary.change_pct.covers,
+      format: "number" as const,
+    },
+    {
+      title: "Average Check",
+      current: kpiSummary.current.avg_check,
+      previous: kpiSummary.previous.avg_check,
+      change: kpiSummary.change_pct.avg_check,
+      format: "currency" as const,
+    },
+    {
+      title: "Target Achievement",
+      current: kpiSummary.target.achievement_pct,
+      previous: 100,
+      change: kpiSummary.target.achievement_pct - 100,
+      format: "number" as const,
+    },
+  ];
+
+  const topItemEntries = topItems.map((item) => ({
+    label: item.item,
+    value: item.count.toString(),
+  }));
+
+  const staffPraiseEntries = staffPraise.map((entry) => ({
+    label: entry.staff,
+    value: entry.count.toString(),
+  }));
+
   return (
-    <main className="mx-auto max-w-5xl p-6 space-y-8">
-      <h1 className="text-3xl font-bold">Legacy Skye Steward — Dashboard</h1>
+    <main className="px-6 py-10">
+      <div className="mx-auto max-w-6xl space-y-8">
+        <header className="space-y-2">
+          <h1 className="text-3xl font-semibold text-slate-900">Handover &amp; Analytics</h1>
+          <p className="text-sm text-slate-600">
+            Monitor daily performance, celebrate your team, and spot trends across outlets.
+          </p>
+        </header>
 
-      <section className="space-y-3">
-        <h2 className="text-xl font-semibold">KPI Summary</h2>
-        <div className="text-sm text-gray-500">
-          Window: {kpi.window.start} → {kpi.window.end}
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Stat label="Total Revenue" value={kpi.current.total_revenue.toFixed(2)} />
-          <Stat label="Covers" value={kpi.current.covers} />
-          <Stat label="Avg Check" value={kpi.current.avg_check.toFixed(2)} />
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Stat label="Target" value={kpi.target.total_revenue_target.toFixed(0)} />
-          <Stat label="Achievement %" value={`${kpi.target.achievement_pct.toFixed(2)}%`} />
-          <Stat label="Revenue Δ%" value={`${kpi.change_pct.total_revenue.toFixed(2)}%`} />
-        </div>
-      </section>
+        <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+          {kpiCards.map((card) => (
+            <KpiCard key={card.title} {...card} />
+          ))}
+        </section>
 
-      <section className="space-y-3">
-        <h2 className="text-xl font-semibold">Top Items</h2>
-        {topItems.length === 0 ? (
-          <div className="text-gray-500 text-sm">No item data in the selected window.</div>
-        ) : (
-          <ul className="divide-y rounded-2xl border bg-white">
-            {topItems.map((t, i) => (
-              <li key={i} className="flex items-center justify-between p-3">
-                <span>{t.item}</span>
-                <span className="text-gray-500">{t.count}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        <section className="grid gap-6 lg:grid-cols-[2fr,1fr]">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-slate-900">Recent Handovers</h2>
+              <span className="text-xs uppercase tracking-wide text-slate-500">
+                Latest 10 entries
+              </span>
+            </div>
+            <HandoversTable handovers={handovers} />
+          </div>
 
-      <section className="space-y-3">
-        <h2 className="text-xl font-semibold">Staff Praise</h2>
-        {praise.length === 0 ? (
-          <div className="text-gray-500 text-sm">No guest praise data yet.</div>
-        ) : (
-          <ul className="divide-y rounded-2xl border bg-white">
-            {praise.map((p, i) => (
-              <li key={i} className="flex items-center justify-between p-3">
-                <span>{p.staff}</span>
-                <span className="text-gray-500">{p.count}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+          <div className="grid gap-6">
+            <ListCard title="Top Items" items={topItemEntries} emptyMessage="No sales recorded" />
+            <ListCard title="Staff Praise" items={staffPraiseEntries} emptyMessage="No notes yet" />
+          </div>
+        </section>
+      </div>
     </main>
   );
 }

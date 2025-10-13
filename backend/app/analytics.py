@@ -1,154 +1,210 @@
-# app/analytics.py
-from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any, Tuple
+"""Analytics utilities for the hospitality handover system."""
+from __future__ import annotations
+
+from collections import Counter
+from datetime import datetime, time, timedelta, timezone
+
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
-from app import models
 
-def _normalize_dates(
-    start_date: Optional[datetime | str],
-    end_date: Optional[datetime | str],
-) -> Tuple[datetime, datetime]:
-    if isinstance(start_date, str) and start_date:
-        start_date = datetime.fromisoformat(start_date)
-    if isinstance(end_date, str) and end_date:
-        end_date = datetime.fromisoformat(end_date)
+from .models import GuestNote, Handover
 
-    if not end_date:
-        end_date = datetime.now()
-    if not start_date:
-        start_date = end_date - timedelta(days=6)
+def _to_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
-    sdt = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
-    edt = end_date.replace(hour=23, minute=59, second=59, microsecond=0)
-    return sdt, edt
+
+def parse_iso_datetime(value: str | None) -> datetime | None:
+    """Parse ISO8601 datetimes without relying on external libraries."""
+
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    return _to_utc(datetime.fromisoformat(value))
+
+
+def default_window(days: int = 7) -> tuple[datetime, datetime]:
+    """Return the default analytics window covering the last *days* calendar days."""
+
+    now = datetime.now(timezone.utc)
+    end_date = datetime.combine(now.date(), time.max, tzinfo=timezone.utc)
+    start_date = datetime.combine(
+        (end_date - timedelta(days=days - 1)).date(),
+        time.min,
+        tzinfo=timezone.utc,
+    )
+    return start_date, end_date
+
+
+def normalize_window(
+    start: datetime | None,
+    end: datetime | None,
+    *,
+    default_days: int = 7,
+) -> tuple[datetime, datetime]:
+    """Ensure a valid date window is produced, falling back to defaults."""
+
+    if start and end:
+        if start > end:
+            start, end = end, start
+        return _to_utc(start), _to_utc(end)
+
+    if start and not end:
+        start = _to_utc(start)
+        end = datetime.combine(start.date(), time.max, tzinfo=timezone.utc)
+        return start, end
+
+    if end and not start:
+        end = _to_utc(end)
+        start = datetime.combine(end.date() - timedelta(days=default_days - 1), time.min, tzinfo=timezone.utc)
+        return start, end
+
+    return default_window(default_days)
+
+
+def _handover_range_query(
+    db: Session,
+    start: datetime,
+    end: datetime,
+    outlet: str | None,
+):
+    stmt = select(Handover).where(Handover.date >= start, Handover.date <= end)
+    if outlet:
+        stmt = stmt.where(Handover.outlet == outlet)
+    return db.scalars(stmt)
+
+
+def _guest_note_range_query(
+    db: Session,
+    start: datetime,
+    end: datetime,
+    outlet: str | None,
+):
+    stmt = select(GuestNote).where(GuestNote.date >= start, GuestNote.date <= end)
+    if outlet:
+        stmt = stmt.where(GuestNote.outlet == outlet)
+    return db.scalars(stmt)
+
 
 def top_items(
     db: Session,
-    start_date: Optional[datetime | str],
-    end_date: Optional[datetime | str],
-    limit: int = 5,
-    outlet: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    sdt, edt = _normalize_dates(start_date, end_date)
+    *,
+    start: datetime,
+    end: datetime,
+    outlet: str | None,
+    limit: int,
+) -> list[dict[str, str | int]]:
+    """Return the most frequently appearing top sales items."""
 
-    if hasattr(models, "TopSale"):
-        q = (
-            db.query(
-                models.TopSale.item_name.label("item"),
-                func.sum(models.TopSale.quantity).label("qty"),
-            )
-            .filter(models.TopSale.date >= sdt, models.TopSale.date <= edt)
-        )
-        if outlet:
-            q = q.filter(models.TopSale.outlet == outlet)
-        rows = q.group_by(models.TopSale.item_name).order_by(desc("qty")).limit(limit).all()
-        return [{"item": r.item, "quantity": int(r.qty)} for r in rows]
-
-    counts: Dict[str, int] = {}
-    q = db.query(models.Handover).filter(models.Handover.date >= sdt, models.Handover.date <= edt)
-    if outlet:
-        q = q.filter(models.Handover.outlet == outlet)
-
-    for h in q.all():
-        if not getattr(h, "top_sales", None):
-            continue
-        items = h.top_sales
-        if isinstance(items, str):
-            items = [x.strip() for x in items.split(",") if x.strip()]
-        for it in items:
-            counts[it] = counts.get(it, 0) + 1
-
-    return [
-        {"item": k, "quantity": v}
-        for k, v in sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+    counter: Counter[str] = Counter()
+    for handover in _handover_range_query(db, start, end, outlet):
+        counter.update(handover.top_sales or [])
+    items = [
+        {"item": item, "count": count}
+        for item, count in counter.most_common(limit)
     ]
+    return items
+
 
 def staff_praise(
     db: Session,
-    start_date: Optional[datetime | str],
-    end_date: Optional[datetime | str],
-    limit: int = 5,
-    outlet: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    if not hasattr(models, "GuestNote"):
-        return []
+    *,
+    start: datetime,
+    end: datetime,
+    outlet: str | None,
+    limit: int,
+) -> list[dict[str, str | int]]:
+    """Return praise counts per staff member based on guest notes."""
 
-    sdt, edt = _normalize_dates(start_date, end_date)
-    q = (
-        db.query(
-            models.GuestNote.staff.label("staff"),
-            func.count(models.GuestNote.id).label("praise_count"),
-        )
-        .filter(models.GuestNote.date >= sdt, models.GuestNote.date <= edt)
-        .filter(models.GuestNote.sentiment == "positive")
+    stmt = (
+        select(GuestNote.staff, func.count(GuestNote.id))
+        .where(GuestNote.date >= start, GuestNote.date <= end)
     )
     if outlet:
-        q = q.filter(models.GuestNote.outlet == outlet)
+        stmt = stmt.where(GuestNote.outlet == outlet)
+    stmt = stmt.group_by(GuestNote.staff).order_by(func.count(GuestNote.id).desc())
+    results = db.execute(stmt).all()
+    return [{"staff": staff, "count": count} for staff, count in results[:limit]]
 
-    rows = q.group_by(models.GuestNote.staff).order_by(desc("praise_count")).limit(limit).all()
-    return [{"staff": r.staff or "Unspecified", "praise_count": int(r.praise_count)} for r in rows]
+
+def _aggregate_kpis(db: Session, start: datetime, end: datetime, outlet: str | None) -> dict[str, float | int]:
+    stmt = select(
+        func.coalesce(func.sum(Handover.covers), 0),
+        func.coalesce(func.sum(Handover.food_revenue), 0.0),
+        func.coalesce(func.sum(Handover.beverage_revenue), 0.0),
+    ).where(Handover.date >= start, Handover.date <= end)
+    if outlet:
+        stmt = stmt.where(Handover.outlet == outlet)
+    covers, food_revenue, beverage_revenue = db.execute(stmt).one()
+    covers = int(covers or 0)
+    food_revenue = float(food_revenue or 0.0)
+    beverage_revenue = float(beverage_revenue or 0.0)
+    total_revenue = food_revenue + beverage_revenue
+    avg_check = total_revenue / covers if covers else 0.0
+    return {
+        "covers": covers,
+        "food_revenue": food_revenue,
+        "beverage_revenue": beverage_revenue,
+        "total_revenue": total_revenue,
+        "avg_check": avg_check,
+    }
+
+
+def _pct_change(current: float, previous: float) -> float:
+    if previous == 0:
+        return 0.0
+    return ((current - previous) / previous) * 100.0
+
 
 def kpi_summary(
     db: Session,
-    target: Optional[str] = None,
-    outlet: Optional[str] = None,
-) -> Dict[str, Any]:
-    end = datetime.now().replace(hour=23, minute=59, second=59, microsecond=0)
-    start = (end - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
-    p_end = (start - timedelta(seconds=1)).replace(microsecond=0)
-    p_start = (p_end - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+    *,
+    start: datetime,
+    end: datetime,
+    outlet: str | None,
+    target: float,
+) -> dict[str, object]:
+    """Return KPI summary for the specified window and comparison."""
 
-    def rollup(sdt: datetime, edt: datetime) -> Dict[str, float]:
-        q = db.query(
-            func.coalesce(func.sum(models.Handover.covers), 0),
-            func.coalesce(func.sum(models.Handover.food_revenue), 0.0),
-            func.coalesce(func.sum(models.Handover.beverage_revenue), 0.0),
-        ).filter(models.Handover.date >= sdt, models.Handover.date <= edt)
-        if outlet:
-            q = q.filter(models.Handover.outlet == outlet)
+    current = _aggregate_kpis(db, start, end, outlet)
+    window_delta = end - start
+    previous_end = start - timedelta(seconds=1)
+    previous_start = previous_end - window_delta
+    previous = _aggregate_kpis(db, previous_start, previous_end, outlet)
 
-        covers, food_rev, bev_rev = q.one()
-        covers = int(covers)
-        food_rev = float(food_rev)
-        bev_rev = float(bev_rev)
-        total_rev = food_rev + bev_rev
-        avg_check = (total_rev / covers) if covers else 0.0
-        return {
-            "covers": covers,
-            "food_revenue": food_rev,
-            "beverage_revenue": bev_rev,
-            "total_revenue": total_rev,
-            "avg_check": avg_check,
-        }
+    change_pct = {
+        "covers": _pct_change(current["covers"], previous["covers"]),
+        "total_revenue": _pct_change(current["total_revenue"], previous["total_revenue"]),
+        "avg_check": _pct_change(current["avg_check"], previous["avg_check"]),
+    }
 
-    cur = rollup(start, end)
-    prev = rollup(p_start, p_end)
+    achievement_pct = (current["total_revenue"] / target * 100.0) if target else 0.0
 
-    def pct(cur_v: float, prev_v: float) -> float:
-        if prev_v == 0:
-            return 0.0 if cur_v == 0 else 100.0
-        return ((cur_v - prev_v) / prev_v) * 100.0
-
-    summary: Dict[str, Any] = {
-        "window": {"start": start.isoformat(), "end": end.isoformat()},
-        "current": cur,
-        "previous": prev,
-        "change_pct": {
-            "covers": pct(cur["covers"], prev["covers"]),
-            "total_revenue": pct(cur["total_revenue"], prev["total_revenue"]),
-            "avg_check": pct(cur["avg_check"], prev["avg_check"]),
+    return {
+        "window": {
+            "start": _to_utc(start),
+            "end": _to_utc(end),
+        },
+        "current": current,
+        "previous": previous,
+        "change_pct": change_pct,
+        "target": {
+            "total_revenue_target": float(target),
+            "achievement_pct": achievement_pct,
         },
     }
 
-    if target:
-        try:
-            t = float(target)
-            summary["target"] = {
-                "total_revenue_target": t,
-                "achievement_pct": (cur["total_revenue"] / t * 100.0) if t > 0 else 0.0,
-            }
-        except Exception:
-            pass
 
-    return summary
+__all__ = [
+    "parse_iso_datetime",
+    "default_window",
+    "normalize_window",
+    "top_items",
+    "staff_praise",
+    "kpi_summary",
+]
