@@ -1,21 +1,11 @@
-"""Dependency helpers for FastAPI routes."""
 from __future__ import annotations
 
-from collections.abc import Generator
+# Compatibility shim so all routes import the DB dependency from here.
+# New code should import only `get_db` from app.deps.
 
-from sqlalchemy.orm import Session
+from .db import get_db  # re-export for routes
 
-from .db import get_session
-
-
-def get_db() -> Generator[Session, None, None]:
-    """Yield a database session and ensure cleanup."""
-
-    session = get_session()
-    try:
-        yield session
-    finally:
-        session.close()
-
-
-__all__ = ["get_db"]
+# Legacy alias for older code that still imports `get_session` from app.deps/app.db
+def get_session():
+    # Yielding the same generator keeps type/behavior compatible.
+    return get_db()

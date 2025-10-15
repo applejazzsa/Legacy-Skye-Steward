@@ -1,83 +1,58 @@
-"""Pydantic models for request and response payloads."""
 from __future__ import annotations
 
-from datetime import datetime
 from typing import List, Optional
-
-from pydantic import BaseModel, ConfigDict, Field
-
-
-class GuestNoteBase(BaseModel):
-    date: datetime
-    staff: str
-    note: str
-    outlet: Optional[str] = None
-
-
-class GuestNoteRead(GuestNoteBase):
-    id: int
-
-    model_config = ConfigDict(from_attributes=True)
-
+from datetime import datetime
+from pydantic import BaseModel, field_validator
+import json
 
 class HandoverBase(BaseModel):
     outlet: str
     date: datetime
     shift: str
-    period: Optional[str] = None
-    bookings: int = 0
-    walk_ins: int = 0
-    covers: int = 0
-    food_revenue: float = 0.0
-    beverage_revenue: float = 0.0
-    top_sales: List[str] = Field(default_factory=list)
-
-
-class HandoverCreate(HandoverBase):
-    """Schema for creating a new handover."""
-
-
-class HandoverRead(HandoverBase):
-    id: int
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class KPIChange(BaseModel):
-    covers: float
-    total_revenue: float
-    avg_check: float
-
-
-class KPIValues(BaseModel):
+    period: str
+    bookings: int
+    walk_ins: int
     covers: int
     food_revenue: float
     beverage_revenue: float
-    total_revenue: float
-    avg_check: float
+    top_sales: List[str] = []
 
+class HandoverCreate(HandoverBase):
+    pass
 
-class KPIWindow(BaseModel):
-    start: datetime
-    end: datetime
+class HandoverOut(HandoverBase):
+    id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
+    # be tolerant of legacy JSON strings
+    @field_validator("top_sales", mode="before")
+    @classmethod
+    def _coerce_top_sales(cls, v):
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, list) else [str(parsed)]
+            except Exception:
+                return [v]
+        return v
 
-class KPITarget(BaseModel):
-    total_revenue_target: float
-    achievement_pct: float
+    class Config:
+        from_attributes = True
 
+# alias expected by your routes
+HandoverRead = HandoverOut
 
-class KPISummary(BaseModel):
-    window: KPIWindow
-    current: KPIValues
-    previous: KPIValues
-    change_pct: KPIChange
-    target: KPITarget
+class GuestNoteBase(BaseModel):
+    guest_name: str
+    note: str
 
+class GuestNoteCreate(GuestNoteBase):
+    pass
 
-__all__ = [
-    "GuestNoteRead",
-    "HandoverCreate",
-    "HandoverRead",
-    "KPISummary",
-]
+class GuestNoteOut(GuestNoteBase):
+    id: int
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

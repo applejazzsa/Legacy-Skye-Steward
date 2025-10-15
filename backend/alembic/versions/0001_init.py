@@ -1,6 +1,5 @@
 """Initial database schema."""
 from __future__ import annotations
-
 from alembic import op
 import sqlalchemy as sa
 
@@ -9,47 +8,32 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
-
 def upgrade() -> None:
     op.create_table(
-        "handover",
+        "handovers",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("outlet", sa.String(length=255), nullable=False),
-        sa.Column("date", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("shift", sa.String(length=50), nullable=False),
-        sa.Column("period", sa.String(length=50), nullable=True),
-        sa.Column("bookings", sa.Integer(), nullable=False, server_default=sa.text("0")),
-        sa.Column("walk_ins", sa.Integer(), nullable=False, server_default=sa.text("0")),
-        sa.Column("covers", sa.Integer(), nullable=False, server_default=sa.text("0")),
-        sa.Column("food_revenue", sa.Float(), nullable=False, server_default=sa.text("0")),
-        sa.Column("beverage_revenue", sa.Float(), nullable=False, server_default=sa.text("0")),
+        sa.Column("outlet", sa.String(), nullable=False),
+        sa.Column("date", sa.DateTime(), nullable=False),
+        sa.Column("shift", sa.String(), nullable=False),
+        sa.Column("period", sa.String(), nullable=False),
+        sa.Column("bookings", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("walk_ins", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("covers", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("food_revenue", sa.Float(), nullable=False, server_default="0"),
+        sa.Column("beverage_revenue", sa.Float(), nullable=False, server_default="0"),
         sa.Column("top_sales", sa.JSON(), nullable=False, server_default=sa.text("'[]'")),
+        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("(datetime('now'))")),
+        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.text("(datetime('now'))")),
     )
-    op.create_index(op.f("ix_handover_date"), "handover", ["date"], unique=False)
-    op.create_index(op.f("ix_handover_id"), "handover", ["id"], unique=False)
-    op.create_index(op.f("ix_handover_outlet"), "handover", ["outlet"], unique=False)
 
     op.create_table(
-        "guest_note",
+        "guest_notes",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("date", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("staff", sa.String(length=255), nullable=False),
-        sa.Column("note", sa.String(length=500), nullable=False),
-        sa.Column("outlet", sa.String(length=255), nullable=True),
+        sa.Column("guest_name", sa.String(), nullable=False),
+        sa.Column("note", sa.String(), nullable=False),
+        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("(datetime('now'))")),
     )
-    op.create_index(op.f("ix_guest_note_date"), "guest_note", ["date"], unique=False)
-    op.create_index(op.f("ix_guest_note_id"), "guest_note", ["id"], unique=False)
-    op.create_index(op.f("ix_guest_note_outlet"), "guest_note", ["outlet"], unique=False)
-    op.create_index(op.f("ix_guest_note_staff"), "guest_note", ["staff"], unique=False)
-
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_guest_note_staff"), table_name="guest_note")
-    op.drop_index(op.f("ix_guest_note_outlet"), table_name="guest_note")
-    op.drop_index(op.f("ix_guest_note_id"), table_name="guest_note")
-    op.drop_index(op.f("ix_guest_note_date"), table_name="guest_note")
-    op.drop_table("guest_note")
-    op.drop_index(op.f("ix_handover_outlet"), table_name="handover")
-    op.drop_index(op.f("ix_handover_id"), table_name="handover")
-    op.drop_index(op.f("ix_handover_date"), table_name="handover")
-    op.drop_table("handover")
+    op.drop_table("guest_notes")
+    op.drop_table("handovers")

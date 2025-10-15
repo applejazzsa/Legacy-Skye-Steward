@@ -1,43 +1,34 @@
-"""SQLAlchemy models for the hospitality domain."""
 from __future__ import annotations
 
-from datetime import datetime
-from typing import List
-
-from sqlalchemy import DateTime, Float, Integer, JSON, String
-from sqlalchemy.orm import Mapped, mapped_column
-
-from .db import Base
-
+from sqlalchemy import Column, Integer, String, DateTime, Float, func
+from sqlalchemy.types import JSON
+from app.db import Base
 
 class Handover(Base):
-    """Operational handover information for a hospitality outlet."""
+    __tablename__ = "handovers"
 
-    __tablename__ = "handover"
+    id = Column(Integer, primary_key=True, index=True)
+    outlet = Column(String, nullable=False)
+    date = Column(DateTime(timezone=False), nullable=False, index=True)
+    shift = Column(String, nullable=False)
+    period = Column(String, nullable=False)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    outlet: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
-    shift: Mapped[str] = mapped_column(String(50), nullable=False)
-    period: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    bookings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    walk_ins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    covers: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    food_revenue: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    beverage_revenue: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    top_sales: Mapped[List[str]] = mapped_column(JSON, nullable=False, default_factory=list)
+    bookings = Column(Integer, nullable=False, default=0)
+    walk_ins = Column(Integer, nullable=False, default=0)
+    covers = Column(Integer, nullable=False, default=0)
+    food_revenue = Column(Float, nullable=False, default=0.0)
+    beverage_revenue = Column(Float, nullable=False, default=0.0)
 
+    # stored as JSON array (SQLAlchemy maps to TEXT on SQLite; OK)
+    top_sales = Column(JSON, nullable=False, default=list)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 class GuestNote(Base):
-    """Compliments and notable guest feedback for staff."""
+    __tablename__ = "guest_notes"
 
-    __tablename__ = "guest_note"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
-    staff: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
-    note: Mapped[str] = mapped_column(String(500), nullable=False)
-    outlet: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-
-
-__all__ = ["Handover", "GuestNote"]
+    id = Column(Integer, primary_key=True, index=True)
+    guest_name = Column(String, nullable=False)
+    note = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
