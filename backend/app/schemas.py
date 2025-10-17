@@ -1,10 +1,9 @@
-from __future__ import annotations
-
-from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel, field_validator
-import json
+from enum import Enum
+from typing import List, Optional
+from pydantic import BaseModel, Field
 
+# -------- Handover --------
 class HandoverBase(BaseModel):
     outlet: str
     date: datetime
@@ -15,44 +14,64 @@ class HandoverBase(BaseModel):
     covers: int
     food_revenue: float
     beverage_revenue: float
-    top_sales: List[str] = []
+    top_sales: List[str] = Field(default_factory=list)
 
-class HandoverCreate(HandoverBase):
-    pass
-
-class HandoverOut(HandoverBase):
+class HandoverRead(HandoverBase):
     id: int
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    # be tolerant of legacy JSON strings
-    @field_validator("top_sales", mode="before")
-    @classmethod
-    def _coerce_top_sales(cls, v):
-        if isinstance(v, str):
-            try:
-                parsed = json.loads(v)
-                return parsed if isinstance(parsed, list) else [str(parsed)]
-            except Exception:
-                return [v]
-        return v
-
+    created_at: datetime
+    updated_at: datetime
     class Config:
         from_attributes = True
 
-# alias expected by your routes
-HandoverRead = HandoverOut
-
-class GuestNoteBase(BaseModel):
+# -------- Guest Notes --------
+class GuestNoteRead(BaseModel):
+    id: int
     guest_name: str
     note: str
-
-class GuestNoteCreate(GuestNoteBase):
-    pass
-
-class GuestNoteOut(GuestNoteBase):
-    id: int
-    created_at: Optional[datetime] = None
-
+    created_at: datetime
     class Config:
         from_attributes = True
+
+# -------- Incidents (NEW) --------
+class IncidentStatus(str, Enum):
+    OPEN = "OPEN"
+    CLOSED = "CLOSED"
+
+class IncidentSeverity(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+class IncidentBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    area: Optional[str] = None
+    owner: Optional[str] = None
+    status: IncidentStatus = IncidentStatus.OPEN
+    severity: IncidentSeverity = IncidentSeverity.MEDIUM
+    due_date: Optional[datetime] = None
+
+class IncidentCreate(IncidentBase):
+    pass
+
+class IncidentRead(IncidentBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    resolved_at: Optional[datetime] = None
+    class Config:
+        from_attributes = True
+
+# -------- Analytics DTOs --------
+class KpiSummary(BaseModel):
+    window: str
+    covers: int
+    revenue: float
+    avg_check: float
+    revenue_vs_prev: float
+    target: float
+    target_gap: float
+
+class TopItem(BaseModel):
+    item: str
+    count: int

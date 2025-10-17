@@ -1,20 +1,12 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
 import App from "./App";
-import "./index.css";
 
-function Root() {
-  return <App />;
-}
-
-const rootEl = document.getElementById("root");
-if (!rootEl) {
-  // Hard fail early so it's obvious if the root div is missing
-  throw new Error("Root element #root not found in index.html");
-}
-
-ReactDOM.createRoot(rootEl).render(
+ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <Root />
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
   </React.StrictMode>
 );

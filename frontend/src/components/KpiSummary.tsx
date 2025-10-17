@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { api, KpiSummary } from "../api";
+import { api, KpiSummary as KpiType } from "../api";
 
-export default function KpiSummaryCard() {
+export default function KpiSummary() {
   const [target, setTarget] = useState(10000);
-  const [data, setData] = useState<KpiSummary | null>(null);
+  const [data, setData] = useState<KpiType | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -17,12 +17,6 @@ export default function KpiSummaryCard() {
   };
 
   useEffect(() => { load(target); }, []);
-
-  const fmtMoney = (v?: number) =>
-    typeof v === "number" ? `$${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—";
-
-  const fmt2 = (v?: number) =>
-    typeof v === "number" ? (Number(v).toFixed(2)) : "0.00";
 
   return (
     <div className="card">
@@ -44,33 +38,33 @@ export default function KpiSummaryCard() {
           <div className="row">
             <div className="kpi">
               <div className="label">Window</div>
-              <div className="value">{data.window || "—"}</div>
+              <div className="value">{data.window}</div>
             </div>
             <div className="kpi">
               <div className="label">Covers</div>
-              <div className="value">{Number(data.covers ?? 0).toLocaleString()}</div>
+              <div className="value">{data.covers.toLocaleString()}</div>
             </div>
             <div className="kpi">
               <div className="label">Revenue</div>
-              <div className="value">{fmtMoney(data.revenue)}</div>
+              <div className="value">${data.revenue.toLocaleString()}</div>
             </div>
           </div>
 
           <div className="row" style={{marginTop:8}}>
             <div className="kpi">
               <div className="label">Avg Check</div>
-              <div className="value">${fmt2(data.avg_check)}</div>
+              <div className="value">${(data.avg_check ?? 0).toFixed(2)}</div>
             </div>
             <div className="kpi">
               <div className="label">Vs Previous</div>
-              <div className={`value ${Number(data.revenue_vs_prev) >= 0 ? 'pos' : 'neg'}`}>
-                {Number(data.revenue_vs_prev) >= 0 ? '▲' : '▼'} {fmtMoney(Math.abs(Number(data.revenue_vs_prev)))}
+              <div className={`value ${data.revenue_vs_prev >= 0 ? 'pos' : 'neg'}`}>
+                {data.revenue_vs_prev >= 0 ? '▲' : '▼'} ${Math.abs(data.revenue_vs_prev).toLocaleString()}
               </div>
             </div>
             <div className="kpi">
               <div className="label">Target Gap</div>
-              <div className={`value ${Number(data.target_gap) <= 0 ? 'pos' : 'neg'}`}>
-                {Number(data.target_gap) <= 0 ? '✓' : '△'} {fmtMoney(Math.abs(Number(data.target_gap)))}
+              <div className={`value ${data.target_gap <= 0 ? 'pos' : 'neg'}`}>
+                {data.target_gap <= 0 ? '✓' : '△'} ${Math.abs(data.target_gap).toLocaleString()}
               </div>
             </div>
           </div>

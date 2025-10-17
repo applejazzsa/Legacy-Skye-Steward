@@ -16,6 +16,12 @@ export default function HandoverTable() {
   return (
     <div className="card">
       <h2>Handovers</h2>
+
+      <div style={{display:'flex', gap:8, marginBottom:12}}>
+        <button className="button" onClick={api.exportHandoversCsv}>Export CSV</button>
+        <button className="button" onClick={api.exportHandoversXlsx}>Export XLSX</button>
+      </div>
+
       {loading && <div className="badge">Loading…</div>}
       {err && <div className="badge" style={{color:'#ef4444'}}>Error: {err}</div>}
       {!loading && !err && (
@@ -47,14 +53,9 @@ export default function HandoverTable() {
                   <td>{r.covers}</td>
                   <td>${r.food_revenue.toFixed(2)}</td>
                   <td>${r.beverage_revenue.toFixed(2)}</td>
-                  <td>{Array.isArray(r.top_sales) ? r.top_sales.join(", ") : String(r.top_sales ?? "")}</td>
+                  <td>{r.top_sales?.join(", ")}</td>
                 </tr>
               ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={10}><div className="badge">No handovers yet.</div></td>
-                </tr>
-              )}
             </tbody>
           </table>
         </div>

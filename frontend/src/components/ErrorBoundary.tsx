@@ -1,27 +1,31 @@
 import React from "react";
 
+type Props = { children: React.ReactNode; fallback?: React.ReactNode };
 type State = { hasError: boolean; error?: any };
 
-export default class ErrorBoundary extends React.Component<React.PropsWithChildren, State> {
-  constructor(props: React.PropsWithChildren) {
+export default class ErrorBoundary extends React.Component<Props, State> {
+  constructor(props: Props) {
     super(props);
     this.state = { hasError: false };
   }
-  static getDerivedStateFromError(error: any): State {
+  static getDerivedStateFromError(error: any) {
     return { hasError: true, error };
   }
   componentDidCatch(error: any, info: any) {
-    console.error("ErrorBoundary caught:", error, info);
+    // You could log to a service here
+    console.error("Component error:", error, info);
   }
   render() {
     if (this.state.hasError) {
       return (
-        <div className="container">
+        this.props.fallback ?? (
           <div className="card">
             <h2>Something went wrong</h2>
-            <pre style={{whiteSpace:"pre-wrap"}}>{String(this.state.error)}</pre>
+            <div className="badge" style={{ color: "#ef4444" }}>
+              {String(this.state.error ?? "Unknown error")}
+            </div>
           </div>
-        </div>
+        )
       );
     }
     return this.props.children;
