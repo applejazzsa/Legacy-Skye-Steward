@@ -1,0 +1,8 @@
+{
+  "total": 3,
+  "items": [
+    { "id": 101, "outlet": "Cafe Grill", "severity": "Medium", "title": "Card machine offline", "status": "OPEN" },
+    { "id": 102, "outlet": "Azure Restaurant", "severity": "High", "title": "Cold pass lamp failure", "status": "OPEN" },
+    { "id": 103, "outlet": "Spa", "severity": "Low", "title": "Missing oils in Room 2", "status": "IN_PROGRESS" }
+  ]
+}
