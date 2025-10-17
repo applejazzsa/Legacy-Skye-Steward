@@ -1,38 +1,42 @@
-const API_BASE = import.meta.env.VITE_API_URL ?? "http://127.0.0.1:8000";
+export type JsonMap = Record<string, unknown>
 
-async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { signal, headers: { Accept: "application/json" } });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`${res.status} ${res.statusText} – ${text}`);
+const mode = (import.meta.env.VITE_API_MODE || 'live').toString()
+const tenant = (import.meta.env.VITE_TENANT || 'legacy').toString()
+const externalBase = (import.meta.env.VITE_API_BASE || '').toString()
+
+// If a relative URL is used and Vite proxy is configured, calls go to /api/... via proxy.
+// If an absolute URL is provided, we call it directly (no proxy).
+function buildUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path
+  if (externalBase && !path.startsWith('/api')) {
+    // allow passing endpoints like 'api/...' without leading slash
+    return `${externalBase}/${path.replace(/^\/?/, '')}`
   }
-  return res.json();
+  return path // relative; let Vite proxy handle /api/...
 }
 
-export type KpiSummary = { covers: number; revenue: number };
-export type TopItem = { name: string; count: number };
-export type Handover = {
-  id: number; outlet: string; date: string; shift: string; period: string;
-  bookings: number; walk_ins: number; covers: number;
-  food_revenue: number; beverage_revenue: number; top_sales: string;
-};
-export type GuestNote = { id: number; guest_name: string; note: string; created_at: string };
-export type Incident = {
-  id: number; title: string; description: string; area: string; owner: string;
-  status: string; severity: string; due_date: string | null; resolved_at: string | null;
-  created_at: string; updated_at: string;
-};
+export async function fetchJson<T = JsonMap>(path: string, timeoutMs = 10000): Promise<T> {
+  const url = buildUrl(path)
+  const ctrl = new AbortController()
+  const t = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    if (mode === 'mock') {
+      // In mock mode, load local mock files (e.g., /mock/*.json)
+      const res = await fetch(path.startsWith('/mock') ? path : `/mock${path}`, { signal: ctrl.signal })
+      if (!res.ok) throw new Error(`Mock HTTP ${res.status} on ${path}`)
+      return (await res.json()) as T
+    }
 
-export const api = {
-  kpiSummary: (target = 10000, signal?: AbortSignal) =>
-    get<KpiSummary>(`/api/analytics/kpi-summary?target=${encodeURIComponent(target)}`, signal),
-
-  topItems: (limit = 5, signal?: AbortSignal) =>
-    get<TopItem[]>(`/api/analytics/top-items?limit=${encodeURIComponent(limit)}`, signal),
-
-  handovers: (signal?: AbortSignal) => get<Handover[]>(`/api/handover`, signal),
-
-  guestNotes: (signal?: AbortSignal) => get<GuestNote[]>(`/api/guest-notes`, signal),
-
-  incidents: (signal?: AbortSignal) => get<Incident[]>(`/api/incidents`, signal),
-};
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { 'X-Tenant': tenant },
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      throw new Error(`HTTP ${res.status} ${res.statusText} for ${url} :: ${text}`)
+    }
+    return (await res.json()) as T
+  } finally {
+    clearTimeout(t)
+  }
+}
