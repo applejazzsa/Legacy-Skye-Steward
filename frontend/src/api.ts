@@ -1,109 +1,54 @@
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
+import type { DateRange, KpiSummary, RevenuePoint, TopItem } from "./types";
 
-export type Handover = {
-  id: number;
-  outlet: string;
-  date: string;
-  shift: "AM" | "PM";
-  period: string;
-  bookings: number;
-  walk_ins: number;
-  covers: number;
-  food_revenue: number;
-  beverage_revenue: number;
-  top_sales: string[];
-  created_at: string;
-  updated_at: string;
-};
+const BASE = "/api/analytics";
 
-export type GuestNote = {
-  id: number;
-  guest_name: string;
-  note: string;
-  created_at: string;
-};
-
-export type KpiSummary = {
-  window: string;
-  covers: number;
-  revenue: number;
-  avg_check?: number;
-  revenue_vs_prev: number;
-  target: number;
-  target_gap: number;
-};
-
-export type TopItem = { item: string; count: number };
-
-export type IncidentStatus = "OPEN" | "IN_PROGRESS" | "CLOSED";
-export type IncidentSeverity = "LOW" | "MEDIUM" | "HIGH";
-
-export type IncidentFollowUp = {
-  id: number;
-  note: string;
-  owner?: string;
-  due_date?: string;
-  done_at?: string;
-  created_at: string;
-  updated_at: string;
-};
-
-export type Incident = {
-  id: number;
-  title: string;
-  description?: string;
-  area?: string;
-  owner?: string;
-  status: IncidentStatus;
-  severity: IncidentSeverity;
-  due_date?: string;
-  resolved_at?: string;
-  created_at: string;
-  updated_at: string;
-  followups: IncidentFollowUp[];
-};
-
-export type IncidentCreate = {
-  title: string;
-  description?: string;
-  area?: string;
-  owner?: string;
-  status?: IncidentStatus;
-  severity?: IncidentSeverity;
-  due_date?: string;
-  first_followup?: { note: string; owner?: string; due_date?: string };
-};
-
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
+function asJson<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
 
-async function post<T>(path: string, body: any): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
+export function makeRange(range: "7d" | "14d" | "30d"): DateRange {
+  const to = new Date();
+  const days = range === "30d" ? 30 : range === "14d" ? 14 : 7;
+  const from = new Date(to);
+  from.setDate(to.getDate() - (days - 1));
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return { date_from: fmt(from), date_to: fmt(to) };
 }
+
+type TenantParam = { tenant?: string | null };
 
 export const api = {
-  health: () => get<{ status: string }>("/health"),
-  handovers: () => get<Handover[]>("/api/handover"),
-  guestNotes: () => get<GuestNote[]>("/api/guest-notes"),
-  kpiSummary: (target: number) => get<KpiSummary>(`/api/analytics/kpi-summary?target=${encodeURIComponent(target)}`),
-  topItems: (limit = 5) => get<TopItem[]>(`/api/analytics/top-items?limit=${encodeURIComponent(limit)}`),
+  async kpiSummary(
+    p: TenantParam & { target?: number } & DateRange
+  ): Promise<KpiSummary> {
+    const u = new URL(`${BASE}/kpi-summary`, window.location.origin);
+    if (p.tenant) u.searchParams.set("tenant", String(p.tenant));
+    u.searchParams.set("date_from", p.date_from);
+    u.searchParams.set("date_to", p.date_to);
+    if (p.target != null) u.searchParams.set("target", String(p.target));
+    return fetch(u.toString(), { credentials: "include" }).then(asJson);
+  },
 
-  incidents: () => get<Incident[]>("/api/incidents"),
-  createIncident: (payload: IncidentCreate) => post<Incident>("/api/incidents", payload),
+  async revenueTrend(
+    p: TenantParam & DateRange,
+    _range: string
+  ): Promise<RevenuePoint[]> {
+    const u = new URL(`${BASE}/revenue-trend`, window.location.origin);
+    if (p.tenant) u.searchParams.set("tenant", String(p.tenant));
+    u.searchParams.set("date_from", p.date_from);
+    u.searchParams.set("date_to", p.date_to);
+    return fetch(u.toString(), { credentials: "include" }).then(asJson);
+  },
 
-  weekly: (weeks=8) => get<{week:string; revenue:number; covers:number}[]>(`/api/analytics/weekly?weeks=${weeks}`),
-
-  exportHandoversCsv: () => window.open(`${API_BASE}/api/export/handovers.csv`, "_blank"),
-  exportHandoversXlsx: () => window.open(`${API_BASE}/api/export/handovers.xlsx`, "_blank"),
-  exportIncidentsCsv: () => window.open(`${API_BASE}/api/export/incidents.csv`, "_blank"),
-  exportIncidentsXlsx: () => window.open(`${API_BASE}/api/export/incidents.xlsx`, "_blank"),
+  async topItems(
+    p: TenantParam & DateRange & { limit?: number }
+  ): Promise<TopItem[]> {
+    const u = new URL(`${BASE}/top-items`, window.location.origin);
+    if (p.tenant) u.searchParams.set("tenant", String(p.tenant));
+    u.searchParams.set("date_from", p.date_from);
+    u.searchParams.set("date_to", p.date_to);
+    u.searchParams.set("limit", String(p.limit ?? 5));
+    return fetch(u.toString(), { credentials: "include" }).then(asJson);
+  },
 };

@@ -1,97 +1,76 @@
 import { useEffect, useState } from "react";
-import { api, Incident, IncidentCreate } from "../api";
+import { useAppStore } from "../store";
+import { makeRange, api } from "../api";
+
+type Incident = {
+  id: string | number;
+  when: string;     // ISO
+  severity: "low" | "medium" | "high" | string;
+  summary: string;
+  reported_by?: string;
+};
+
+const MOCK: Incident[] = [
+  {
+    id: "i1",
+    when: new Date().toISOString(),
+    severity: "low",
+    summary: "Incidents API not found. Showing placeholder incident.",
+    reported_by: "System",
+  },
+];
 
 export default function Incidents() {
-  const [list, setList] = useState<Incident[]>([]);
+  const { tenant, range } = useAppStore();
+  const { date_from, date_to } = makeRange(range);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
 
-  const [form, setForm] = useState<IncidentCreate>({
-    title: "",
-    area: "",
-    owner: "",
-    severity: "MEDIUM",
-    status: "OPEN",
-  });
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const fn: any = (api as any).incidents;
+        if (typeof fn === "function") {
+          const data: Incident[] = await fn({ tenant, date_from, date_to });
+          if (!alive) return;
+          setIncidents(Array.isArray(data) ? data : []);
+        } else {
+          if (!alive) return;
+          setIncidents(MOCK);
+        }
+      } catch {
+        if (!alive) return;
+        setIncidents(MOCK);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [tenant, range, date_from, date_to]);
 
-  const load = () => {
-    setLoading(true);
-    api.incidents()
-      .then(setList)
-      .catch(e => setErr(String(e)))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => { load(); }, []);
-
-  const submit = async () => {
-    try {
-      if (!form.title.trim()) return;
-      await api.createIncident(form);
-      setForm({ title: "", area: "", owner: "", severity: "MEDIUM", status: "OPEN" });
-      load();
-    } catch (e:any) {
-      alert(String(e));
-    }
-  };
+  if (loading) return <p className="muted">Loading incidents…</p>;
+  if (incidents.length === 0) return <p className="muted">No incidents.</p>;
 
   return (
-    <div className="card">
-      <h2>Incidents & Follow-ups</h2>
-
-      <div style={{display:'grid', gap:8, marginBottom:12}}>
-        <input className="input" placeholder="Title" value={form.title} onChange={e=>setForm({...form, title:e.target.value})} />
-        <input className="input" placeholder="Area (Restaurant, Spa...)" value={form.area||""} onChange={e=>setForm({...form, area:e.target.value})} />
-        <input className="input" placeholder="Owner (optional)" value={form.owner||""} onChange={e=>setForm({...form, owner:e.target.value})} />
-        <div style={{display:'flex', gap:8}}>
-          <select className="input" value={form.severity} onChange={e=>setForm({...form, severity: e.target.value as any})}>
-            <option value="LOW">LOW</option>
-            <option value="MEDIUM">MEDIUM</option>
-            <option value="HIGH">HIGH</option>
-          </select>
-          <select className="input" value={form.status} onChange={e=>setForm({...form, status: e.target.value as any})}>
-            <option value="OPEN">OPEN</option>
-            <option value="IN_PROGRESS">IN PROGRESS</option>
-            <option value="CLOSED">CLOSED</option>
-          </select>
-          <button className="button" onClick={submit}>Add</button>
+    <div style={{ display: "grid", gap: 8 }}>
+      {incidents.map((i) => (
+        <div key={i.id} className="card" style={{ padding: 10 }}>
+          <div style={{ display: "flex", gap: 8, justifyContent: "space-between" }}>
+            <strong style={{ textTransform: "capitalize" }}>{i.severity}</strong>
+            <span className="muted">{new Date(i.when).toLocaleString()}</span>
+          </div>
+          <div style={{ marginTop: 6 }}>{i.summary}</div>
+          {i.reported_by && (
+            <div className="muted" style={{ marginTop: 6 }}>
+              Reported by: {i.reported_by}
+            </div>
+          )}
         </div>
-      </div>
-
-      <div style={{display:'flex', gap:8, marginBottom:12}}>
-        <button className="button" onClick={api.exportIncidentsCsv}>Export CSV</button>
-        <button className="button" onClick={api.exportIncidentsXlsx}>Export XLSX</button>
-      </div>
-
-      {loading && <div className="badge">Loading…</div>}
-      {err && <div className="badge" style={{color:'#ef4444'}}>Error: {err}</div>}
-      {!loading && !err && (
-        <ul style={{listStyle:'none', padding:0, margin:0}}>
-          {list.map(i => (
-            <li key={i.id} style={{borderBottom:'1px solid var(--border)', padding:'8px 0'}}>
-              <div style={{display:'flex', justifyContent:'space-between', gap:8}}>
-                <div>
-                  <strong>{i.title}</strong>
-                  <div className="sub">{i.area || "—"}</div>
-                </div>
-                <span className="badge">{i.severity} · {i.status}</span>
-              </div>
-              {i.description && <div style={{color:'var(--muted)', marginTop:4}}>{i.description}</div>}
-              {i.followups?.length > 0 && (
-                <div style={{marginTop:6}}>
-                  <div className="sub">Follow-ups</div>
-                  <ul style={{margin:0, paddingLeft:16}}>
-                    {i.followups.map(f => (
-                      <li key={f.id} className="sub">{f.note} {f.owner ? `· ${f.owner}` : ""}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </li>
-          ))}
-          {list.length === 0 && <div className="badge">No incidents yet.</div>}
-        </ul>
-      )}
+      ))}
     </div>
   );
 }

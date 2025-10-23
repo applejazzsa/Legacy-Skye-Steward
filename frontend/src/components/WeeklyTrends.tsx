@@ -1,53 +1,57 @@
-import { useEffect, useState } from "react";
-import { api } from "../api";
+import { memo } from "react";
 
-type Point = { week: string; revenue: number; covers: number };
+export type RevenuePoint = { d: string; t: number | string | null | undefined };
 
-export default function WeeklyTrends() {
-  const [data, setData] = useState<Point[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+export default memo(function WeeklyTrends({ data }: { data: RevenuePoint[] }) {
+  // 1) Sanitize data: coerce to numbers and remove non-finite points
+  const clean = (Array.isArray(data) ? data : [])
+    .map((p, i) => ({
+      i,
+      d: String(p?.d ?? ""),
+      t: Number((p as any)?.t ?? 0),
+    }))
+    .filter((p) => Number.isFinite(p.t));
 
-  useEffect(() => {
-    api
-      .weekly(8)
-      .then(setData)
-      .catch((e) => setErr(String(e)))
-      .finally(() => setLoading(false));
-  }, []);
+  if (clean.length === 0) {
+    return <p className="muted">No data for selected range.</p>;
+  }
 
-  const w = 520,
-    h = 120,
-    pad = 20;
-  const maxRev = Math.max(1, ...data.map((d) => d.revenue));
-  const x = (i: number) =>
-    pad + (i * (w - 2 * pad)) / Math.max(1, data.length - 1);
-  const y = (v: number) => h - pad - (v / maxRev) * (h - 2 * pad);
-  const path = data
-    .map((d, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(d.revenue)}`)
+  // 2) Dimensions
+  const W = 900;
+  const H = 220;
+  const PAD = 20;
+
+  // 3) Scales (safe against single-point or flat series)
+  const xs = clean.map((p) => p.i);
+  const ys = clean.map((p) => p.t);
+
+  const minY = Math.min(0, ...ys);
+  const maxY = Math.max(1, ...ys);
+
+  const spanX = Math.max(xs.length - 1, 1);
+  const spanY = Math.max(maxY - minY, 1);
+
+  const x = (i: number) => PAD + (i / spanX) * (W - PAD * 2);
+  const y = (v: number) => H - PAD - ((v - minY) / spanY) * (H - PAD * 2);
+
+  // 4) Path
+  const dAttr = clean
+    .map((p, idx) => `${idx === 0 ? "M" : "L"} ${x(idx)} ${y(p.t)}`)
     .join(" ");
 
   return (
-    <div className="card">
-      <h2>Weekly Trends (Revenue)</h2>
-      {loading && <div className="badge">Loading…</div>}
-      {err && <div className="badge" style={{ color: "#ef4444" }}>Error: {err}</div>}
-      {!loading && !err && data.length > 0 && (
-        <>
-          <svg width={w} height={h} role="img" aria-label="Weekly revenue trend">
-            <path d={path} fill="none" stroke="white" strokeWidth="2" />
-            {data.map((d, i) => (
-              <circle key={d.week} cx={x(i)} cy={y(d.revenue)} r={2.5} />
-            ))}
-          </svg>
-          <div className="sub" style={{ marginTop: 6 }}>
-            {data.map((d) => d.week).join("  ·  ")}
-          </div>
-        </>
+    <svg width="100%" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Revenue trend">
+      <rect x="0" y="0" width={W} height={H} fill="transparent" />
+      {/* baseline at y=0 (only if within range) */}
+      {minY <= 0 && 0 <= maxY && (
+        <line x1={PAD} y1={y(0)} x2={W - PAD} y2={y(0)} stroke="#1b2340" strokeWidth="1" />
       )}
-      {!loading && !err && data.length === 0 && (
-        <div className="badge">No trend data.</div>
-      )}
-    </div>
+      {/* line */}
+      <path d={dAttr} fill="none" stroke="#58a6ff" strokeWidth="2" />
+      {/* points */}
+      {clean.map((p, idx) => (
+        <circle key={p.i} cx={x(idx)} cy={y(p.t)} r="2.5" fill="#58a6ff" />
+      ))}
+    </svg>
   );
-}
+});

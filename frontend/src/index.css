@@ -1,18 +1,18 @@
-@import "tailwindcss";
-
-/* Optional app-wide tweaks */
-:root {
-  color-scheme: light dark;
+:root{
+  --bg:#0f1720;
+  --panel:#101925;
+  --text:#e5ecf4;
+  --muted:#9fb1c7;
+  --border:#334155;
 }
+html,body,#root{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, "Noto Sans";}
 
-html, body, #root {
-  height: 100%;
-}
-
-body {
-  @apply bg-white text-gray-900 antialiased;
-}
-
-.dark body {
-  @apply bg-gray-950 text-gray-100;
-}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
+.small{font-size:.85rem;color:var(--muted)}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px}
+.kpis .tile{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px}
+.kpis .big{font-size:1.4rem;font-weight:700}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width: 980px){.row{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,minmax(160px,1fr))}}

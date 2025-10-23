@@ -1,0 +1,8 @@
+{
+  "items": [
+    { "id": 5001, "date": "2025-10-16", "outlet": "Cafe Grill", "shift": "PM", "covers": 78 },
+    { "id": 5002, "date": "2025-10-16", "outlet": "Leopard Bar", "shift": "PM", "covers": 54 },
+    { "id": 5003, "date": "2025-10-17", "outlet": "Azure Restaurant", "shift": "AM", "covers": 63 }
+  ],
+  "total": 3
+}
