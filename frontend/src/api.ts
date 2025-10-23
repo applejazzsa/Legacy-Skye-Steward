@@ -1,102 +1,78 @@
 // frontend/src/api.ts
-import type { KpiSummary, RevenuePoint, TopItem } from "./types";
 
-/**
- * Base URL for the FastAPI backend.
- * You can override with: VITE_API_BASE="http://127.0.0.1:8000/api"
- */
-export const API_BASE =
-  (import.meta as any).env?.VITE_API_BASE ?? "http://127.0.0.1:8000/api";
+export type RangeKey = "7d" | "14d" | "30d";
 
-/** Simple JSON fetch helper with query params support */
-async function getJSON<T>(path: string, params?: Record<string, any>): Promise<T> {
-  const url = new URL(path, API_BASE);
-  if (params) {
-    Object.entries(params).forEach(([k, v]) => {
-      if (v === undefined || v === null) return;
-      url.searchParams.set(k, String(v));
-    });
-  }
-  const res = await fetch(url.toString(), { method: "GET" });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`GET ${url.pathname} ${res.status}: ${text}`);
-  }
-  return res.json() as Promise<T>;
-}
-
-/** Date-range helper used around the app */
-export function makeRange(
-  range: "7d" | "14d" | "30d"
-): { date_from: string; date_to: string } {
-  const today = new Date();
-  const to = new Date(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()));
-  const days = range === "30d" ? 30 : range === "14d" ? 14 : 7;
-  const from = new Date(to);
-  from.setUTCDate(to.getUTCDate() - (days - 1));
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  return { date_from: iso(from), date_to: iso(to) };
-}
-
-/** ---------- API surface ---------- */
-export const api = {
-  kpiSummary: ({
-    tenant,
-    date_from,
-    date_to,
-    target,
-  }: {
-    tenant: string;
-    date_from: string;
-    date_to: string;
-    target?: number;
-  }) =>
-    getJSON<KpiSummary>("/analytics/kpi-summary", {
-      tenant,
-      date_from,
-      date_to,
-      target,
-    }),
-
-  revenueTrend: (
-    {
-      tenant,
-      date_from,
-      date_to,
-    }: {
-      tenant: string;
-      date_from: string;
-      date_to: string;
-    },
-    _range?: "7d" | "14d" | "30d"
-  ) =>
-    getJSON<RevenuePoint[]>("/analytics/revenue-trend", {
-      tenant,
-      date_from,
-      date_to,
-    }),
-
-  topItems: ({
-    tenant,
-    date_from,
-    date_to,
-    limit = 5,
-  }: {
-    tenant: string;
-    date_from: string;
-    date_to: string;
-    limit?: number;
-  }) =>
-    getJSON<TopItem[]>("/analytics/top-items", {
-      tenant,
-      date_from,
-      date_to,
-      limit,
-    }),
+export type KpiSummary = {
+  total: number;
+  food: number;
+  beverage: number;
+  target?: number;
+  target_pct?: number; // 0–100
 };
 
-/** ---------- Fallback helpers (requested) ---------- */
+export type RevenuePoint = {
+  d: string; // YYYY-MM-DD
+  t: number; // total for the day
+};
+
+export type TopItem = {
+  name: string;
+  category: "Food" | "Beverage" | string;
+  qty: number;
+  revenue: number;
+};
+
+const API_BASE =
+  (import.meta as any).env?.VITE_API_BASE ||
+  "http://127.0.0.1:8000";
+
+const json = (r: Response) => {
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+  return r.json();
+};
+
+/** Build date range from a quick preset */
+export function makeRange(range: RangeKey) {
+  const to = new Date();
+  const from = new Date();
+  if (range === "7d") from.setDate(to.getDate() - 6);
+  if (range === "14d") from.setDate(to.getDate() - 13);
+  if (range === "30d") from.setDate(to.getDate() - 29);
+  const date_from = from.toISOString().slice(0, 10);
+  const date_to = to.toISOString().slice(0, 10);
+  return { date_from, date_to };
+}
+
+/** Small helpers for safe fallbacks */
 export const isZeroKpi = (k?: any) =>
   !k || [k.total, k.food, k.beverage].every((v) => !v || v === 0);
 
 export const isEmpty = (arr?: any[]) => !arr || arr.length === 0;
+
+type CommonParams = {
+  tenant?: string;
+  date_from: string;
+  date_to: string;
+};
+
+export const api = {
+  async kpiSummary(params: CommonParams & { target?: number }): Promise<KpiSummary> {
+    const url = new URL("/api/analytics/kpi-summary", API_BASE);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? "")));
+    return fetch(url).then(json);
+  },
+
+  async revenueTrend(params: CommonParams, _range: RangeKey): Promise<RevenuePoint[]> {
+    const url = new URL("/api/analytics/revenue-trend", API_BASE);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? "")));
+    return fetch(url).then(json);
+  },
+
+  async topItems(params: CommonParams & { limit?: number }): Promise<TopItem[]> {
+    const url = new URL("/api/analytics/top-items", API_BASE);
+    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? "")));
+    return fetch(url).then(json);
+  },
+};
+
+export type { KpiSummary as TKpiSummary, RevenuePoint as TRevenuePoint, TopItem as TTopItem };
