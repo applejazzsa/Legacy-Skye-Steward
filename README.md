@@ -1,6 +1,6 @@
 # Legacy Skye Steward Monorepo
 
-End-to-end hospitality handover & analytics system featuring a FastAPI backend and a Next.js dashboard frontend. Follow the quick start below to get everything running locally on Windows PowerShell (with bash equivalents provided).
+End-to-end hospitality handover & analytics system featuring a FastAPI backend and a Vite + React dashboard frontend. Follow the quick start below to get everything running locally on Windows PowerShell (with bash equivalents provided).
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ End-to-end hospitality handover & analytics system featuring a FastAPI backend a
    python -m uvicorn app.main:app --reload --app-dir .
    ```
 
-2. **Frontend (Next.js Dashboard)**
+2. **Frontend (Vite + React Dashboard)**
    ```powershell
    cd frontend
    copy .env.local.example .env.local
@@ -42,7 +42,7 @@ End-to-end hospitality handover & analytics system featuring a FastAPI backend a
    npm run dev
    ```
 
-The API is available at http://127.0.0.1:8000 and the dashboard at http://localhost:3000.
+The API is available at http://127.0.0.1:8000 and the dashboard at http://localhost:5173.
 
 ## PowerShell Helpers
 

@@ -1,39 +1,27 @@
-import { create } from "zustand";
+import { useState, useEffect } from "react";
 
-type AppState = {
-  tenant: string | null;
-  range: "7d" | "14d" | "30d";
-  refreshSec: number;
-  tick: number;
-  setTenant: (t: string | null) => void;
-  setRange: (r: AppState["range"]) => void;
-  setRefresh: (sec: number) => void;
-};
+export type Range = "7d" | "14d" | "30d";
 
-export const useAppStore = create<AppState>((set, get) => {
-  // auto-refresh tick
-  let timer: number | null = null;
+export function makeRange(r: Range) {
+  const end = new Date();
+  const start = new Date();
+  const days = r === "7d" ? 6 : r === "14d" ? 13 : 29;
+  start.setDate(end.getDate() - days);
+  const date_to = end.toISOString().slice(0, 10);
+  const date_from = start.toISOString().slice(0, 10);
+  return { date_from, date_to };
+}
 
-  const setRefreshInternal = (sec: number) => {
-    if (timer) {
-      window.clearInterval(timer);
-      timer = null;
-    }
-    if (sec > 0) {
-      timer = window.setInterval(() => {
-        set({ tick: get().tick + 1 });
-      }, sec * 1000) as unknown as number;
-    }
-    set({ refreshSec: sec });
-  };
+export function useAppStore() {
+  const [tenant, setTenant] = useState("legacy");
+  const [range, setRange] = useState<Range>("7d");
+  const [refreshSec, setRefresh] = useState(30);
+  const [tick, setTick] = useState(0);
 
-  return {
-    tenant: null,
-    range: "7d",
-    refreshSec: 30,
-    tick: 0,
-    setTenant: (t) => set({ tenant: t }),
-    setRange: (r) => set({ range: r }),
-    setRefresh: setRefreshInternal,
-  };
-});
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), refreshSec * 1000);
+    return () => clearInterval(t);
+  }, [refreshSec]);
+
+  return { tenant, setTenant, range, setRange, refreshSec, setRefresh, tick };
+}

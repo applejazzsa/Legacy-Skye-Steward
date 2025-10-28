@@ -1,26 +1,21 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List
+from __future__ import annotations
 
-class IncidentCreate(BaseModel):
-    outlet: str = Field(..., min_length=1, max_length=120)
-    severity: str = Field(..., min_length=1, max_length=20)
-    title: str = Field(..., min_length=1, max_length=200)
+# feat(auth): pydantic schemas (minimal for responses)
 
-class IncidentUpdate(BaseModel):
-    status: Optional[str] = Field(None, min_length=1, max_length=20)
+from pydantic import BaseModel
+from typing import List, Optional
 
-class IncidentOut(BaseModel):
+
+class TenantLink(BaseModel):
     id: int
-    tenant_id: str
-    outlet: str
-    severity: str
-    title: str
-    status: str
-    created_at: str
+    name: str
+    slug: str
+    role: str
 
-    class Config:
-        orm_mode = True
 
-class IncidentList(BaseModel):
-    total: int
-    items: List[IncidentOut]
+class UserOut(BaseModel):
+    id: int
+    email: str
+    tenants: List[TenantLink]
+
+

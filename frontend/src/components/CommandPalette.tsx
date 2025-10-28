@@ -1,61 +1,114 @@
-// src/components/CommandPalette.tsx
-import { useMemo, useState } from "react";
+// frontend/src/components/CommandPalette.tsx
+import React, { useEffect, useRef, useState } from "react";
 
-export type Command = {
+type Command = {
   id: string;
-  label: string;
-  hint?: string;
-  run: () => void;
+  title: string;
+  onRun: () => void;
 };
 
-export default function CommandPalette({
-  open,
-  onClose,
-  commands,
-}: {
-  open: boolean;
-  onClose: () => void;
-  commands: Command[];
-}) {
-  const [q, setQ] = useState("");
+const DEFAULT_CMDS: Command[] = [
+  { id: "reload", title: "Reload data", onRun: () => window.location.reload() },
+];
 
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    if (!s) return commands;
-    return commands.filter((c) => c.label.toLowerCase().includes(s));
-  }, [q, commands]);
+declare global {
+  interface Window {
+    openCommandPalette?: () => void;
+  }
+}
+
+export default function CommandPalette() {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const filtered = DEFAULT_CMDS.filter((c) => c.title.toLowerCase().includes(q.toLowerCase()));
+
+  // expose open on window
+  useEffect(() => {
+    window.openCommandPalette = () => setOpen(true);
+    return () => {
+      window.openCommandPalette = undefined;
+    };
+  }, []);
+
+  // keyboard shortcuts: '/' and Cmd/Ctrl+K
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const isModK = (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k";
+      const isSlash = !e.ctrlKey && !e.metaKey && e.key === "/";
+      if (isModK || isSlash) {
+        e.preventDefault();
+        setOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    if (open) setTimeout(() => inputRef.current?.focus(), 0);
+  }, [open]);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      <div className="relative z-50 max-w-xl mx-auto mt-24 bg-white rounded-xl border shadow">
+    <div
+      role="dialog"
+      aria-modal="true"
+      onClick={() => setOpen(false)}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,.45)",
+        backdropFilter: "blur(2px)",
+        zIndex: 999,
+        display: "grid",
+        placeItems: "start center",
+        paddingTop: "15vh",
+      }}
+    >
+      <div
+        className="card"
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: 560, maxWidth: "92vw" }}
+      >
         <input
-          autoFocus
+          ref={inputRef}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Type a command…"
-          className="w-full px-3 py-2 border-b rounded-t-xl outline-none"
+          style={{
+            width: "100%",
+            padding: "12px 14px",
+            borderRadius: 10,
+            background: "rgba(255,255,255,.06)",
+            border: "1px solid rgba(255,255,255,.08)",
+            color: "inherit",
+          }}
         />
-        <ul className="max-h-72 overflow-auto">
-          {filtered.map((c) => (
-            <li
-              key={c.id}
-              className="px-3 py-2 cursor-pointer hover:bg-gray-50 flex justify-between"
-              onClick={() => {
-                c.run();
-                onClose();
-              }}
-            >
-              <span>{c.label}</span>
-              {c.hint && <span className="text-xs text-gray-500">{c.hint}</span>}
-            </li>
-          ))}
-          {!filtered.length && (
-            <li className="px-3 py-6 text-sm text-gray-500">No matches</li>
+        <div style={{ marginTop: 10, maxHeight: 240, overflow: "auto" }}>
+          {filtered.length === 0 ? (
+            <div className="muted">No commands.</div>
+          ) : (
+            filtered.map((c) => (
+              <button
+                key={c.id}
+                className="btn"
+                style={{ width: "100%", textAlign: "left", marginBottom: 6 }}
+                onClick={() => {
+                  setOpen(false);
+                  setTimeout(c.onRun, 0);
+                }}
+              >
+                {c.title}
+              </button>
+            ))
           )}
-        </ul>
+        </div>
+        <div className="muted" style={{ marginTop: 8 }}>
+          Shortcuts: <kbd>/</kbd> or <kbd>⌘/Ctrl</kbd>+<kbd>K</kbd>
+        </div>
       </div>
     </div>
   );

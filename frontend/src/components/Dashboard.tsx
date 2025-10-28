@@ -1,226 +1,353 @@
-// frontend/src/components/Dashboard.tsx
-
-import { useEffect, useMemo, useState } from "react";
-import {
-  api,
-  makeRange,
-  isZeroKpi,
-  isEmpty,
-  type KpiSummary,
-  type RevenuePoint,
-  type TopItem,
-  type RangeKey,
-} from "../api";
-import { demoTrend, demoTop, demoKpi } from "../demo";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useAppStore, makeRange } from "../store";
+import { fetchDashboard, api } from "../api";
+import type { KpiSummary, RevenuePoint, TopItem, MixDatum } from "../types";
 import { formatZAR } from "../util/currency";
-import { downloadCSV, toCSV } from "../util/csv";
-import { useAppStore } from "../store";
-
-// Sibling components (same folder)
-import TenantSwitcher from "./TenantSwitcher";
-import WeeklyTrends from "./WeeklyTrends";
-import KpiSummaryCard from "./KpiSummary";
-import HandoverTable from "./HandoverTable";
-import Pagination from "./Pagination";
-import GuestNotes from "./GuestNotes";
-import Incidents from "./Incidents";
-
-type MixDatum = { label: string; value: number };
+import MixDonut from "./atom/MixDonut";
+import WeeklyLine from "./atom/WeeklyLine";
+import UploadsStatus from "./UploadsStatus";
+import { Skeleton, SkeletonLine } from "./ui/Skeleton";
+import Bars from "./atom/Bars";
 
 export default function Dashboard() {
-  const { tenant, range, tick } = useAppStore();
-  const { date_from, date_to } = useMemo(() => makeRange(range as RangeKey), [range]);
+  const { tenant, setTenant, range, setRange, refreshSec, setRefresh, tick } = useAppStore();
+  const { date_from, date_to } = useMemo(() => makeRange(range), [range]);
 
+  const [loading, setLoading] = useState(true);
   const [kpi, setKpi] = useState<KpiSummary | null>(null);
   const [trend, setTrend] = useState<RevenuePoint[]>([]);
+  const [top, setTop] = useState<TopItem[]>([]);
+  const [extras, setExtras] = useState<{ avgDaily: number; bestDay: number; incidentRate: number }>({ avgDaily: 0, bestDay: 0, incidentRate: 0 });
   const [mix, setMix] = useState<MixDatum[]>([
     { label: "Food", value: 0 },
     { label: "Beverage", value: 0 },
   ]);
-  const [top, setTop] = useState<TopItem[]>([]);
-  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  const [hotelKpi, setHotelKpi] = useState<{ occupancy?: number; adr?: number; revpar?: number; room_revenue?: number } | null>(null);
+  const [deptSplit, setDeptSplit] = useState<{ label: string; value: number }[]>([]);
+  const [events, setEvents] = useState<{ id: number; at: string; label: string }[]>([]);
+  const [targets, setTargets] = useState<Record<string, number>>({});
+
+  const tenantRef = useRef<HTMLSelectElement | null>(null);
 
   useEffect(() => {
     let alive = true;
+    setLoading(true);
     (async () => {
-      const [k, t, topItems] = await Promise.all([
-        api.kpiSummary({ tenant, date_from, date_to, target: 10000 }),
-        api.revenueTrend({ tenant, date_from, date_to }, range as RangeKey),
-        api.topItems({ tenant, date_from, date_to, limit: 5 }),
-      ]);
-
+      const data = await fetchDashboard(tenant, date_from, date_to, 10000);
       if (!alive) return;
-
-      const trendData = isEmpty(t) ? demoTrend(date_from, date_to) : t;
-      const topData = isEmpty(topItems) ? demoTop : topItems;
-      const kpiData = isZeroKpi(k) ? demoKpi(trendData, 10000) : k;
-
-      setTrend(trendData);
-      setTop(topData);
-      setKpi(kpiData);
-
-      const food = topData
-        .filter((x) => x.category === "Food")
-        .reduce((s, x) => s + x.revenue, 0);
-      const bev = topData
-        .filter((x) => x.category === "Beverage")
-        .reduce((s, x) => s + x.revenue, 0);
-
+      setKpi(data.kpi);
+      // Normalize trend: accept {date,value} or {date,total}
+      const t = (data.trend || []).map((p: any, i: number) => ({
+        date: p.date || String(i),
+        value: Number.isFinite(+p.value) ? +p.value : Number.isFinite(+p.total) ? +p.total : 0,
+      }));
+      setTrend(t);
+      setTop(data.topItems || []);
+      const food = (data.topItems || [])
+        .filter((x: TopItem) => x.category === "Food")
+        .reduce((s: number, x: TopItem) => s + (Number.isFinite(+x.revenue) ? +x.revenue : 0), 0);
+      const bev = (data.topItems || [])
+        .filter((x: TopItem) => x.category === "Beverage")
+        .reduce((s: number, x: TopItem) => s + (Number.isFinite(+x.revenue) ? +x.revenue : 0), 0);
       setMix([
         { label: "Food", value: food },
         { label: "Beverage", value: bev },
       ]);
-
-      setUpdatedAt(new Date());
+      // Extra KPIs (safe, no NaN): avg daily revenue, best day value, incident closure rate placeholder (0 until wired)
+      const sum = t.reduce((s, x) => s + (Number.isFinite(+x.value) ? +x.value : 0), 0);
+      const days = t.length || 1;
+      const avg = Math.round(sum / days);
+      const best = t.reduce((m, x) => Math.max(m, Number.isFinite(+x.value) ? +x.value : 0), 0);
+      setExtras({ avgDaily: avg, bestDay: best, incidentRate: 0 });
+      // Fetch hotel KPIs and department split
+      try {
+        const [hk, ds] = await Promise.all([
+          api.hotelKpis({ tenant, date_from, date_to }),
+          api.deptSplit({ tenant, date_from, date_to }),
+        ]);
+        setHotelKpi(hk || null);
+        setDeptSplit(Array.isArray(ds || []) ? (ds as any[]) : []);
+        // events and targets (tenant-scoped)
+        try {
+          const ev = await api.listEvents({ tenant, date_from, date_to });
+          setEvents(Array.isArray(ev)?ev:[]);
+          const tg = await api.listTargets({ tenant });
+          const map: Record<string, number> = {}; (Array.isArray(tg)?tg:[]).forEach((x:any)=> map[x.dept] = Number(x.target)||0);
+          setTargets(map);
+        } catch { setEvents([]); setTargets({}); }
+      } catch {
+        setHotelKpi(null);
+        setDeptSplit([]);
+      }
+      setLoading(false);
     })();
+    return () => { alive = false; };
+  }, [tenant, date_from, date_to, tick]);
 
-    return () => {
-      alive = false;
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      const isTyping = tag === "input" || tag === "textarea" || tag === "select" || (e as any).isComposing;
+      if (e.key === "/" && !isTyping) {
+        e.preventDefault();
+        tenantRef.current?.focus();
+        return;
+      }
+      const isCmdK = (e.key.toLowerCase() === "k") && (e.metaKey || e.ctrlKey);
+      if (isCmdK) {
+        e.preventDefault();
+        // no-op fallback for Command Palette
+        return;
+      }
     };
-  }, [tenant, range, date_from, date_to, tick]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
-  const exportTop = () => {
-    if (!top || top.length === 0) return;
-    const rows = top.map((t) => ({
-      Name: t.name,
-      Category: t.category,
-      Quantity: t.qty,
-      Revenue: t.revenue,
+  function exportTrendCsv() {
+    const rows: RevenuePoint[] = (trend || []).map((p: any) => ({
+      date: String(p.date || ""),
+      value: Number.isFinite(+p.value) ? +p.value : 0,
     }));
-    downloadCSV(`top-items-${date_from}-to-${date_to}.csv`, toCSV(rows));
-  };
+    const header = ["date", "value"];
+    const body = rows.map(r => [r.date, r.value]);
+    const csv = [header, ...body].map(r => r.join(",")).join("\n");
+    const blob = new Blob([csv], {type: "text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `revenue-trend_${tenant}_${date_from}_${date_to}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
 
   return (
     <>
-      {/* Top controls */}
-      <div className="controls card">
-        <div className="row">
-          <div className="brand">
-            Legacy Skye <span className="muted">Steward</span>
-          </div>
-          <div className="grow" />
-          <TenantSwitcher />
-          <RangeControls />
-          <RefreshControls />
+      <div className="controls sticky-bar" aria-label="Dashboard controls">
+        <div className="brand"><strong>Legacy Skye</strong> <span className="muted">Steward</span></div>
+        <div className="control">
+          <span className="label">Tenant</span>
+          <select ref={tenantRef} value={tenant} onChange={(e) => setTenant(e.target.value)} aria-label="Tenant">
+            <option value="legacy">legacy</option>
+            <option value="alpha">alpha</option>
+          </select>
         </div>
-        <div className="row" style={{ marginTop: 8 }}>
-          <div className="muted">
-            {updatedAt ? `Last updated ${updatedAt.toLocaleString()}` : "Loading…"}
-          </div>
+        <div className="control">
+          <span className="label">Range</span>
+          <select value={range} onChange={(e) => setRange(e.target.value as any)} aria-label="Date range">
+            <option value="7d">Last 7 days</option>
+            <option value="14d">Last 14 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
         </div>
+        <div className="control">
+          <span className="label">Auto-refresh</span>
+          <select value={refreshSec} onChange={(e) => setRefresh(Number(e.target.value))} aria-label="Auto refresh interval">
+            <option value={15}>15s</option>
+            <option value={30}>30s</option>
+            <option value={60}>60s</option>
+          </select>
+        </div>
+        <div className="grow" />
+        <div className="muted">Last updated {new Date().toLocaleString()} - Shortcuts: / or Ctrl+K</div>
       </div>
 
-      {/* KPI summary */}
-      <div className="kpi-grid">
-        <div className="card">
-          {kpi ? (
-            <KpiSummaryCard
-              data={{
-                ...kpi,
-                totalFormatted: formatZAR(kpi.total),
-                foodFormatted: formatZAR(kpi.food),
-                beverageFormatted: formatZAR(kpi.beverage),
-                targetFormatted: formatZAR(kpi.target ?? 0),
-              }}
-            />
-          ) : (
-            <div className="muted">Loading…</div>
+      <div className="row kpis">
+        <KpiCard title="Total Revenue" value={kpi?.total} target={kpi?.target} loading={loading} />
+        <KpiCard title="Food" value={kpi?.food} loading={loading} />
+        <KpiCard title="Beverage" value={kpi?.beverage} loading={loading} />
+        <KpiCard title="Target" value={kpi?.target} loading={loading} />
+      </div>
+
+      <div className="row kpis">
+        <MiniCard title="Avg Daily" value={extras.avgDaily} loading={loading} />
+        <MiniCard title="Best Day" value={extras.bestDay} loading={loading} />
+        <MiniCard title="Incident Close %" value={extras.incidentRate} suffix="%" loading={loading} />
+        <div style={{display:"none"}} />
+      </div>
+
+      <div className="row kpis">
+        <MiniCardPlain title="Occupancy" value={hotelKpi?.occupancy || 0} suffix="%" loading={loading} />
+        <MiniCard title="ADR" value={hotelKpi?.adr || 0} loading={loading} />
+        <MiniCard title="RevPAR" value={hotelKpi?.revpar || 0} loading={loading} />
+        <MiniCard title="Room Revenue" value={hotelKpi?.room_revenue || 0} loading={loading} />
+      </div>
+
+      <div className="row two">
+        <div className="card" aria-label="Revenue trend card">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <h3>Revenue Trend</h3>
+            <button className="primary" onClick={exportTrendCsv} aria-label="Export revenue trend CSV">Export CSV</button>
+          </div>
+          {loading ? <Skeleton style={{height:220}} /> : <WeeklyLine data={trend} events={events} />}
+          {!loading && (
+            <p className="muted" aria-live="polite">{trend.length ? `Showing ${trend.length} day trend from ${date_from} to ${date_to}.` : 'No data for selected range.'}</p>
           )}
         </div>
-      </div>
-
-      {/* charts row */}
-      <div className="grid-2">
-        <div className="card">
-          <h3 className="card-title">Revenue Trend</h3>
-          <WeeklyTrends data={trend} />
-        </div>
-        <div className="card">
-          <h3 className="card-title">Mix (Food vs Beverage)</h3>
-          {mix.every((m) => m.value === 0) ? (
-            <p className="muted">No mix to show yet.</p>
-          ) : (
-            <ul className="mix-list">
-              {mix.map((m) => (
-                <li key={m.label} className="row">
-                  <span className="grow">{m.label}</span>
-                  <strong>{formatZAR(m.value)}</strong>
-                </li>
-              ))}
-            </ul>
+        <div className="card" aria-label="Department revenue card">
+          <h3>Department Revenue</h3>
+          {loading ? <Skeleton style={{height:220}} /> : (
+            (deptSplit && deptSplit.length) ? <MixDonut data={deptSplit as any} /> : <p className="muted">No department revenue yet.</p>
           )}
+          <QuickAddConference onAdded={async (amt, note)=>{ await api.addRevenueEntry({ tenant, category:'Conference', amount: amt, description: note }); }} />
         </div>
       </div>
 
-      {/* top items */}
-      <div className="card">
-        <div className="row">
-          <h3 className="card-title">Top Items</h3>
-          <div className="grow" />
-          <button className="btn" onClick={exportTop} disabled={top.length === 0}>
-            Export CSV
-          </button>
-        </div>
-
-        {top.length === 0 ? (
-          <p className="muted">No items.</p>
-        ) : (
-          <div className="top-flex">
-            {top.map((t) => (
-              <div className="top-chip" key={`${t.name}-${t.category}`} title={`${t.qty} sold`}>
-                <div className="top-name">{t.name}</div>
-                <div className="top-sub">
-                  <span>{t.category}</span>
-                  <strong>{formatZAR(t.revenue)}</strong>
-                </div>
-              </div>
-            ))}
-          </div>
+      <div className="card" aria-label="Monthly Department Performance">
+        <h3>Monthly Department Performance</h3>
+        {loading ? <Skeleton style={{height:220}} /> : (
+          <>
+            <Bars data={buildDeptBars(deptSplit, targets)} />
+            <TargetEditor targets={targets} onSave={async (dept, target)=>{
+              await api.upsertTarget({ tenant, dept, target });
+            }} />
+          </>
         )}
       </div>
 
-      {/* handovers & notes */}
-      <div className="grid-2">
-        <div className="card">
-          <h3 className="card-title">Handovers</h3>
-          <HandoverTable />
-          <Pagination />
-        </div>
-        <div className="card">
-          <h3 className="card-title">Guest Notes &amp; Incidents</h3>
-          <GuestNotes />
-          <div className="sp16" />
-          <Incidents />
-        </div>
+      <div className="card" aria-label="Top items card">
+        <h3>Top Items</h3>
+        {loading ? 
+          <div className="chips">
+            <SkeletonLine style={{width:160}} />
+            <SkeletonLine style={{width:140}} />
+            <SkeletonLine style={{width:180}} />
+          </div>
+          :
+          <div className="chips">
+            {top.map((t) => (
+              <div className="chip" key={t.name} title={`${t.qty} sold`}>
+                <span className="name">{t.name}</span>
+                <span className="money">{formatZAR(Number.isFinite(+t.revenue)?+t.revenue:0)}</span>
+              </div>
+            ))}
+          </div>
+        }
+      </div>
+
+      <UploadsStatus />
+
+      <div className="card" aria-label="Top performing dates">
+        <h3>Top Performing Dates</h3>
+        {loading ? <Skeleton style={{height:36}} /> : (
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 6 }}>
+            {topDates(trend).map(t => {
+              const tag = events.find(e => e.at.slice(0,10) === String(t.date));
+              return (
+                <li key={t.date} className="chip">
+                  <span className="name">{t.date}</span>
+                  <span className="money">{formatZAR(t.value)}</span>
+                  {tag ? <span className="muted">â€¢ {tag.label}</span> : (
+                    <button onClick={async ()=>{
+                      const label = prompt(`Tag event for ${t.date}`) || '';
+                      if (!label) return; await api.createEvent({ tenant, at: `${t.date}T00:00:00Z`, label });
+                      setEvents(prev=> [...prev, { id: Math.random(), at: `${t.date}T00:00:00Z`, label }]);
+                    }}>+ Tag</button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
     </>
   );
 }
 
-function RangeControls() {
-  const { range, setRange } = useAppStore();
+// KPI and mini cards (kept below component to keep file tidy)
+function KpiCard({ title, value, target, loading }: { title: string; value?: number | null; target?: number | null; loading: boolean; }) {
+  const v = Number.isFinite(Number(value)) ? Number(value) : 0;
+  const tgt = Number.isFinite(Number(target)) ? Number(target) : 0;
+  const pct = tgt ? Math.round((v / tgt) * 100) : 0;
   return (
-    <label className="control">
-      <span className="label">Range</span>
-      <select value={range} onChange={(e) => setRange(e.target.value as RangeKey)}>
-        <option value="7d">Last 7 days</option>
-        <option value="14d">Last 14 days</option>
-        <option value="30d">Last 30 days</option>
-      </select>
-    </label>
+    <div className="card kpi">
+      <h4>{title}</h4>
+      {loading ? (
+        <Skeleton style={{height:36, width:"60%"}} />
+      ) : (
+        <>
+          <div className="big">{formatZAR(v)}</div>
+          <div className="sub">{tgt ? `${pct}% of target` : "0%"}</div>
+        </>
+      )}
+    </div>
   );
 }
 
-function RefreshControls() {
-  const { refreshSec, setRefresh } = useAppStore();
+function MiniCard({ title, value, suffix, loading }: { title: string; value?: number | null; suffix?: string; loading: boolean; }) {
+  const v = Number.isFinite(Number(value)) ? Number(value) : 0;
   return (
-    <label className="control">
-      <span className="label">Auto-refresh</span>
-      <select value={refreshSec} onChange={(e) => setRefresh(Number(e.target.value))}>
-        <option value={15}>15s</option>
-        <option value={30}>30s</option>
-        <option value={60}>60s</option>
-      </select>
-    </label>
+    <div className="card kpi">
+      <h4>{title}</h4>
+      {loading ? (
+        <Skeleton style={{height:36, width:"50%"}} />
+      ) : (
+        <>
+          <div className="big">{suffix === "%" ? `${v}%` : formatZAR(v)}</div>
+          <div className="sub">{suffix === "%" ? "Closed this range" : "Across selected range"}</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MiniCardPlain({ title, value, suffix, loading }: { title: string; value?: number | null; suffix?: string; loading: boolean; }) {
+  const v = Number.isFinite(Number(value)) ? Number(value) : 0;
+  return (
+    <div className="card kpi">
+      <h4>{title}</h4>
+      {loading ? (
+        <Skeleton style={{height:36, width:"50%"}} />
+      ) : (
+        <>
+          <div className="big">{suffix === "%" ? `${v}%` : v}</div>
+          <div className="sub">Hotel KPI</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Select the top 5 dates by value for the list
+function topDates(tr: RevenuePoint[]) {
+  const out = [...(tr || [])]
+    .map(p => ({ date: String(p.date ?? ""), value: Number.isFinite(+p.value) ? +p.value : 0 }))
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 5);
+  return out;
+}
+function buildDeptBars(split: { label: string; value: number }[], targets: Record<string, number>) {
+  const labels = ['Rooms','F&B','Spa','Conference'];
+  const actualBy: Record<string, number> = Object.fromEntries((split||[]).map(d=>[d.label, Number(d.value)||0]));
+  return labels.map(l => ({ label: l, target: targets[l] || 0, actual: actualBy[l] || 0 }));
+}
+
+function TargetEditor({ targets, onSave }: { targets: Record<string, number>; onSave: (dept: string, target: number) => Promise<void>; }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({ ...Object.fromEntries(Object.entries(targets).map(([k,v])=>[k,String(v)])) });
+  const labels = ['Rooms','F&B','Spa','Conference'];
+  if (!editing) return <div style={{ marginTop: 8 }}><button onClick={()=>setEditing(true)}>Edit Targets</button></div>;
+  return (
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:8, marginTop:8 }}>
+      {labels.map(l=> (
+        <label key={l} className="field"><span className="label">{l} target</span>
+          <input value={draft[l] || ''} onChange={e=>setDraft(prev=>({ ...prev, [l]: e.target.value }))} />
+          <button onClick={async()=>{ await onSave(l, Number(draft[l]||0)); }}>Save</button>
+        </label>
+      ))}
+      <div><button onClick={()=>setEditing(false)}>Done</button></div>
+    </div>
+  );
+}
+
+function QuickAddConference({ onAdded }: { onAdded: (amount: number, note?: string) => Promise<void> }) {
+  const [amt, setAmt] = useState<string>("");
+  const [note, setNote] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+  return (
+    <div style={{ marginTop: 8, display:'grid', gridTemplateColumns:'1fr 2fr auto', gap:8 }}>
+      <input placeholder="Conference amount (ZAR)" value={amt} onChange={e=>setAmt(e.target.value)} />
+      <input placeholder="Note (optional)" value={note} onChange={e=>setNote(e.target.value)} />
+      <button onClick={async ()=>{ setSaving(true); try { await onAdded(Number(amt||0), note || undefined); setAmt(""); setNote(""); } finally { setSaving(false); } }} disabled={saving}>Add</button>
+    </div>
   );
 }
