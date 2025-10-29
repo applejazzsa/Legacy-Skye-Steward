@@ -1,0 +1,342 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useAppStore, makeRange } from "../store";
+import { fetchDashboard } from "../api";
+import type { KpiSummary, RevenuePoint, TopItem, MixDatum } from "../types";
+import { formatZAR } from "../util/currency";
+import MixDonut from "./atom/MixDonut";
+import WeeklyLine from "./atom/WeeklyLine";
+import UploadsStatus from "./UploadsStatus";
+import { Skeleton, SkeletonLine } from "./ui/Skeleton";
+import Bars from "./atom/Bars";
+
+export default function Dashboard() {
+  const { tenant, setTenant, range, setRange, refreshSec, setRefresh, tick } = useAppStore();
+  const { date_from, date_to } = useMemo(() => makeRange(range), [range]);
+
+  const [loading, setLoading] = useState(true);
+  const [kpi, setKpi] = useState<KpiSummary | null>(null);
+  const [trend, setTrend] = useState<RevenuePoint[]>([]);
+  const [top, setTop] = useState<TopItem[]>([]);
+  const [extras, setExtras] = useState<{ avgDaily: number; bestDay: number; incidentRate: number }>({ avgDaily: 0, bestDay: 0, incidentRate: 0 });
+  const [mix, setMix] = useState<MixDatum[]>([
+    { label: "Food", value: 0 },
+    { label: "Beverage", value: 0 },
+  ]);
+  const [hotelKpi, setHotelKpi] = useState<{ occupancy?: number; adr?: number; revpar?: number; room_revenue?: number } | null>(null);
+  const [deptSplit, setDeptSplit] = useState<{ label: string; value: number }[]>([]);
+  const [events, setEvents] = useState<{ id: number; at: string; label: string }[]>([]);
+  const [targets, setTargets] = useState<Record<string, number>>({});
+
+  const tenantRef = useRef<HTMLSelectElement | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    (async () => {
+      const data = await fetchDashboard(tenant, date_from, date_to, 10000);
+      if (!alive) return;
+      setKpi(data.kpi);
+      // Normalize trend: accept {date,value} or {date,total}
+      const t = (data.trend || []).map((p: any, i: number) => ({
+        date: p.date || String(i),
+        value: Number.isFinite(+p.value) ? +p.value : Number.isFinite(+p.total) ? +p.total : 0,
+      }));
+      setTrend(t);
+      setTop(data.topItems || []);
+      const food = (data.topItems || [])
+        .filter((x: TopItem) => x.category === "Food")
+        .reduce((s: number, x: TopItem) => s + (Number.isFinite(+x.revenue) ? +x.revenue : 0), 0);
+      const bev = (data.topItems || [])
+        .filter((x: TopItem) => x.category === "Beverage")
+        .reduce((s: number, x: TopItem) => s + (Number.isFinite(+x.revenue) ? +x.revenue : 0), 0);
+      setMix([
+        { label: "Food", value: food },
+        { label: "Beverage", value: bev },
+      ]);
+      // Extra KPIs (safe, no NaN): avg daily revenue, best day value, incident closure rate placeholder (0 until wired)
+      const sum = t.reduce((s, x) => s + (Number.isFinite(+x.value) ? +x.value : 0), 0);
+      const days = t.length || 1;
+      const avg = Math.round(sum / days);
+      const best = t.reduce((m, x) => Math.max(m, Number.isFinite(+x.value) ? +x.value : 0), 0);
+      setExtras({ avgDaily: avg, bestDay: best, incidentRate: 0 });
+      // Fetch hotel KPIs and department split
+      try {
+        const API = (import.meta.env.VITE_API_BASE as string) || "http://127.0.0.1:8000";
+        const [hk, ds] = await Promise.all([
+          fetch(`${API}/api/analytics/hotel-kpis?date_from=${date_from}&date_to=${date_to}`, { credentials: "include" }).then(r=>r.ok?r.json():null),
+          fetch(`${API}/api/analytics/dept-split?date_from=${date_from}&date_to=${date_to}`, { credentials: "include" }).then(r=>r.ok?r.json():null),
+        ]);
+        setHotelKpi(hk);
+        setDeptSplit(Array.isArray(ds) ? ds : []);
+        // events and targets
+        try {
+          const API = (import.meta.env.VITE_API_BASE as string) || "http://127.0.0.1:8000";
+          const ev = await fetch(`${API}/api/events?date_from=${date_from}&date_to=${date_to}`, { credentials: 'include' }).then(r=>r.ok?r.json():[]);
+          setEvents(Array.isArray(ev)?ev:[]);
+          const tg = await fetch(`${API}/api/analytics/targets`, { credentials: 'include' }).then(r=>r.ok?r.json():[]);
+          const map: Record<string, number> = {}; (Array.isArray(tg)?tg:[]).forEach((x:any)=> map[x.dept] = Number(x.target)||0);
+          setTargets(map);
+        } catch { setEvents([]); setTargets({}); }
+      } catch {
+        setHotelKpi(null);
+        setDeptSplit([]);
+      }
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [tenant, date_from, date_to, tick]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      const isTyping = tag === "input" || tag === "textarea" || tag === "select" || (e as any).isComposing;
+      if (e.key === "/" && !isTyping) {
+        e.preventDefault();
+        tenantRef.current?.focus();
+        return;
+      }
+      const isCmdK = (e.key.toLowerCase() === "k") && (e.metaKey || e.ctrlKey);
+      if (isCmdK) {
+        e.preventDefault();
+        // no-op fallback for Command Palette
+        return;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  function exportTrendCsv() {
+    const rows: RevenuePoint[] = (trend || []).map((p: any) => ({
+      date: String(p.date || ""),
+      value: Number.isFinite(+p.value) ? +p.value : 0,
+    }));
+    const header = ["date", "value"];
+    const body = rows.map(r => [r.date, r.value]);
+    const csv = [header, ...body].map(r => r.join(",")).join("\n");
+    const blob = new Blob([csv], {type: "text/csv;charset=utf-8;"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `revenue-trend_${tenant}_${date_from}_${date_to}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <>
+      <div className="controls sticky-bar" aria-label="Dashboard controls">
+        <div className="brand"><strong>Legacy Skye</strong> <span className="muted">Steward</span></div>
+        <div className="control">
+          <span className="label">Tenant</span>
+          <select ref={tenantRef} value={tenant} onChange={(e) => setTenant(e.target.value)} aria-label="Tenant">
+            <option value="legacy">legacy</option>
+            <option value="alpha">alpha</option>
+          </select>
+        </div>
+        <div className="control">
+          <span className="label">Range</span>
+          <select value={range} onChange={(e) => setRange(e.target.value as any)} aria-label="Date range">
+            <option value="7d">Last 7 days</option>
+            <option value="14d">Last 14 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
+        </div>
+        <div className="control">
+          <span className="label">Auto-refresh</span>
+          <select value={refreshSec} onChange={(e) => setRefresh(Number(e.target.value))} aria-label="Auto refresh interval">
+            <option value={15}>15s</option>
+            <option value={30}>30s</option>
+            <option value={60}>60s</option>
+          </select>
+        </div>
+        <div className="grow" />
+        <div className="muted">Last updated {new Date().toLocaleString()} - Shortcuts: / or Ctrl+K</div>
+      </div>
+
+      <div className="row kpis">
+        <KpiCard title="Total Revenue" value={kpi?.total} target={kpi?.target} loading={loading} />
+        <KpiCard title="Food" value={kpi?.food} loading={loading} />
+        <KpiCard title="Beverage" value={kpi?.beverage} loading={loading} />
+        <KpiCard title="Target" value={kpi?.target} loading={loading} />
+      </div>
+
+      <div className="row kpis">
+        <MiniCard title="Avg Daily" value={extras.avgDaily} loading={loading} />
+        <MiniCard title="Best Day" value={extras.bestDay} loading={loading} />
+        <MiniCard title="Incident Close %" value={extras.incidentRate} suffix="%" loading={loading} />
+        <div style={{display:"none"}} />
+      </div>
+
+      <div className="row kpis">
+        <MiniCardPlain title="Occupancy" value={hotelKpi?.occupancy || 0} suffix="%" loading={loading} />
+        <MiniCard title="ADR" value={hotelKpi?.adr || 0} loading={loading} />
+        <MiniCard title="RevPAR" value={hotelKpi?.revpar || 0} loading={loading} />
+        <MiniCard title="Room Revenue" value={hotelKpi?.room_revenue || 0} loading={loading} />
+      </div>
+
+      <div className="row two">
+        <div className="card" aria-label="Revenue trend card">
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <h3>Revenue Trend</h3>
+            <button className="primary" onClick={exportTrendCsv} aria-label="Export revenue trend CSV">Export CSV</button>
+          </div>
+          {loading ? <Skeleton style={{height:220}} /> : <WeeklyLine data={trend} events={events} />}
+          {!loading && (
+            <p className="muted" aria-live="polite">{trend.length ? `Showing ${trend.length} day trend from ${date_from} to ${date_to}.` : 'No data for selected range.'}</p>
+          )}
+        </div>
+        <div className="card" aria-label="Department revenue card">
+          <h3>Department Revenue</h3>
+          {loading ? <Skeleton style={{height:220}} /> : (
+            (deptSplit && deptSplit.length) ? <MixDonut data={deptSplit as any} /> : <p className="muted">No department revenue yet.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="card" aria-label="Monthly Department Performance">
+        <h3>Monthly Department Performance</h3>
+        {loading ? <Skeleton style={{height:220}} /> : (
+          <>
+            <Bars data={buildDeptBars(deptSplit, targets)} />
+            <TargetEditor targets={targets} onSave={async (dept, target)=>{
+              const API = (import.meta.env.VITE_API_BASE as string) || "http://127.0.0.1:8000";
+              await fetch(`${API}/api/analytics/targets`, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ dept, target }) });
+              setTargets(prev=>({ ...prev, [dept]: target }));
+            }} />
+          </>
+        )}
+      </div>
+
+      <div className="card" aria-label="Top items card">
+        <h3>Top Items</h3>
+        {loading ? 
+          <div className="chips">
+            <SkeletonLine style={{width:160}} />
+            <SkeletonLine style={{width:140}} />
+            <SkeletonLine style={{width:180}} />
+          </div>
+          :
+          <div className="chips">
+            {top.map((t) => (
+              <div className="chip" key={t.name} title={`${t.qty} sold`}>
+                <span className="name">{t.name}</span>
+                <span className="money">{formatZAR(Number.isFinite(+t.revenue)?+t.revenue:0)}</span>
+              </div>
+            ))}
+          </div>
+        }
+      </div>
+
+      <UploadsStatus />
+
+      <div className="card" aria-label="Top performing dates">
+        <h3>Top Performing Dates</h3>
+        {loading ? <Skeleton style={{height:36}} /> : (
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 6 }}>
+            {topDates(trend).map(t => {
+              const tag = events.find(e => e.at.slice(0,10) === String(t.date));
+              return (
+                <li key={t.date} className="chip">
+                  <span className="name">{t.date}</span>
+                  <span className="money">{formatZAR(t.value)}</span>
+                  {tag ? <span className="muted">• {tag.label}</span> : (
+                    <button onClick={async ()=>{
+                      const label = prompt(`Tag event for ${t.date}`) || '';
+                      if (!label) return;
+                      const API = (import.meta.env.VITE_API_BASE as string) || 'http://127.0.0.1:8000';
+                      await fetch(`${API}/api/events`, { method:'POST', credentials:'include', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ at: `${t.date}T00:00:00Z`, label }) });
+                      setEvents(prev=> [...prev, { id: Math.random(), at: `${t.date}T00:00:00Z`, label }]);
+                    }}>+ Tag</button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+}
+
+function KpiCard({ title, value, target, loading }: { title: string; value?: number | null; target?: number | null; loading: boolean; }) {
+  const v = Number.isFinite(Number(value)) ? Number(value) : 0;
+  const tgt = Number.isFinite(Number(target)) ? Number(target) : 0;
+  const pct = tgt ? Math.round((v / tgt) * 100) : 0;
+  return (
+    <div className="card kpi">
+      <h4>{title}</h4>
+      {loading ? (
+        <Skeleton style={{height:36, width:"60%"}} />
+      ) : (
+        <>
+          <div className="big">{formatZAR(v)}</div>
+          <div className="sub">{tgt ? `${pct}% of target` : "0%"}</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MiniCard({ title, value, suffix, loading }: { title: string; value?: number | null; suffix?: string; loading: boolean; }) {
+  const v = Number.isFinite(Number(value)) ? Number(value) : 0;
+  return (
+    <div className="card kpi">
+      <h4>{title}</h4>
+      {loading ? (
+        <Skeleton style={{height:36, width:"50%"}} />
+      ) : (
+        <>
+          <div className="big">{suffix === "%" ? `${v}%` : formatZAR(v)}</div>
+          <div className="sub">{suffix === "%" ? "Closed this range" : "Across selected range"}</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MiniCardPlain({ title, value, suffix, loading }: { title: string; value?: number | null; suffix?: string; loading: boolean; }) {
+  const v = Number.isFinite(Number(value)) ? Number(value) : 0;
+  return (
+    <div className="card kpi">
+      <h4>{title}</h4>
+      {loading ? (
+        <Skeleton style={{height:36, width:"50%"}} />
+      ) : (
+        <>
+          <div className="big">{suffix === "%" ? `${v}%` : v}</div>
+          <div className="sub">Hotel KPI</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function topDates(tr: RevenuePoint[]) {
+  const out = [...tr].sort((a,b)=> (Number(b.value||0)-Number(a.value||0))).slice(0,5);
+  return out.map(x=>({ date: String(x.date), value: Number(x.value)||0 }));
+}
+
+function buildDeptBars(split: { label: string; value: number }[], targets: Record<string, number>) {
+  const labels = ['Rooms','F&B','Spa','Conference'];
+  const actualBy: Record<string, number> = Object.fromEntries((split||[]).map(d=>[d.label, Number(d.value)||0]));
+  return labels.map(l => ({ label: l, target: targets[l] || 0, actual: actualBy[l] || 0 }));
+}
+
+function TargetEditor({ targets, onSave }: { targets: Record<string, number>; onSave: (dept: string, target: number) => Promise<void>; }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({ ...Object.fromEntries(Object.entries(targets).map(([k,v])=>[k,String(v)])) });
+  const labels = ['Rooms','F&B','Spa','Conference'];
+  if (!editing) return <div style={{ marginTop: 8 }}><button onClick={()=>setEditing(true)}>Edit Targets</button></div>;
+  return (
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(140px,1fr))', gap:8, marginTop:8 }}>
+      {labels.map(l=> (
+        <label key={l} className="field"><span className="label">{l} target</span>
+          <input value={draft[l] || ''} onChange={e=>setDraft(prev=>({ ...prev, [l]: e.target.value }))} />
+          <button onClick={async()=>{ await onSave(l, Number(draft[l]||0)); }}>Save</button>
+        </label>
+      ))}
+      <div><button onClick={()=>setEditing(false)}>Done</button></div>
+    </div>
+  );
+}
+

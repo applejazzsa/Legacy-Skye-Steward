@@ -1,78 +1,498 @@
-// frontend/src/api.ts
+import type { KpiSummary, RevenuePoint, TopItem } from "./types";
+import { demoTrend, demoTop, demoKpi } from "./demo";
 
-export type RangeKey = "7d" | "14d" | "30d";
+// Base API and tenant from Vite env
+const API_BASE = (import.meta.env.VITE_API_BASE as string) || "http://127.0.0.1:8000";
+const DEFAULT_TENANT = (import.meta.env.VITE_TENANT as string) || "legacy";
 
-export type KpiSummary = {
-  total: number;
-  food: number;
-  beverage: number;
-  target?: number;
-  target_pct?: number; // 0–100
-};
-
-export type RevenuePoint = {
-  d: string; // YYYY-MM-DD
-  t: number; // total for the day
-};
-
-export type TopItem = {
-  name: string;
-  category: "Food" | "Beverage" | string;
-  qty: number;
-  revenue: number;
-};
-
-const API_BASE =
-  (import.meta as any).env?.VITE_API_BASE ||
-  "http://127.0.0.1:8000";
-
-const json = (r: Response) => {
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-  return r.json();
-};
-
-/** Build date range from a quick preset */
-export function makeRange(range: RangeKey) {
-  const to = new Date();
-  const from = new Date();
-  if (range === "7d") from.setDate(to.getDate() - 6);
-  if (range === "14d") from.setDate(to.getDate() - 13);
-  if (range === "30d") from.setDate(to.getDate() - 29);
-  const date_from = from.toISOString().slice(0, 10);
-  const date_to = to.toISOString().slice(0, 10);
-  return { date_from, date_to };
-}
-
-/** Small helpers for safe fallbacks */
 export const isZeroKpi = (k?: any) =>
-  !k || [k.total, k.food, k.beverage].every((v) => !v || v === 0);
-
+  !k || [k.total, k.food, k.beverage].every((v: any) => !v || v === 0);
 export const isEmpty = (arr?: any[]) => !arr || arr.length === 0;
 
-type CommonParams = {
-  tenant?: string;
-  date_from: string;
-  date_to: string;
-};
+let devToken: string | null = null;
+function getToken() {
+  if (devToken) return devToken;
+  try { devToken = localStorage.getItem("access_token"); } catch {}
+  return devToken;
+}
+
+type GetOpts = { tenant?: string; query?: Record<string, string | number | (string | number)[] | undefined | null> };
+async function get<T>(path: string, opts?: GetOpts): Promise<T | null> {
+  try {
+    const usp = new URLSearchParams();
+    if (opts?.query) {
+      Object.entries(opts.query).forEach(([k, v]) => {
+        if (v === undefined || v === null || (Array.isArray(v) && v.length === 0)) return;
+        if (Array.isArray(v)) {
+          v.forEach((vv) => { if (vv !== undefined && vv !== null && vv !== "") usp.append(k, String(vv)); });
+        } else {
+          if (v !== "") usp.set(k, String(v));
+        }
+      });
+    }
+    const url = `${API_BASE}${path}${usp.toString() ? `?${usp.toString()}` : ""}`;
+    const token = getToken();
+    const r = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        "X-Tenant-ID": opts?.tenant || DEFAULT_TENANT,
+        "X-Tenant": opts?.tenant || DEFAULT_TENANT,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!r.ok) return null;
+    return (await r.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function post<T>(path: string, body: any, opts?: { tenant?: string }): Promise<T | null> {
+  try {
+    const url = `${API_BASE}${path}`;
+    const token = getToken();
+    const r = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": opts?.tenant || DEFAULT_TENANT,
+        "X-Tenant": opts?.tenant || DEFAULT_TENANT,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body ?? {}),
+    });
+    if (!r.ok) return null;
+    return (await r.json()) as T;
+  } catch {
+    return null;
+  }
+}
 
 export const api = {
-  async kpiSummary(params: CommonParams & { target?: number }): Promise<KpiSummary> {
-    const url = new URL("/api/analytics/kpi-summary", API_BASE);
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? "")));
-    return fetch(url).then(json);
+  // Auth
+  async login(email: string, password: string) {
+    const r = await fetch(`${API_BASE}/api/auth/login`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    try { if (data?.token) localStorage.setItem("access_token", data.token); } catch {}
+    return data;
+  },
+  async logout() {
+    try { localStorage.removeItem("access_token"); } catch {}
+    await fetch(`${API_BASE}/api/auth/logout`, { method: "POST", credentials: "include" });
+  },
+  async me() {
+    const r = await fetch(`${API_BASE}/api/auth/me`, { credentials: "include", headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) } });
+    if (!r.ok) return null;
+    return await r.json();
+  },
+  // Analytics (no tenant header required, but safe to include)
+  async kpiSummary(args: { tenant: string; date_from: string; date_to: string; target: number }) {
+    return await get<KpiSummary>(`/api/analytics/kpi-summary`, {
+      tenant: args.tenant,
+      query: { date_from: args.date_from, date_to: args.date_to, target: args.target },
+    });
+  },
+  async revenueTrend(args: { tenant: string; date_from: string; date_to: string }) {
+    return await get<RevenuePoint[]>(`/api/analytics/revenue-trend`, {
+      tenant: args.tenant,
+      query: { date_from: args.date_from, date_to: args.date_to },
+    });
+  },
+  async topItems(args: { tenant: string; date_from: string; date_to: string; limit: number }) {
+    // Map backend shape to TopItem (infer category, map units)
+    const raw = await get<any[]>(`/api/analytics/top-items`, {
+      tenant: args.tenant,
+      query: { date_from: args.date_from, date_to: args.date_to, limit: args.limit },
+    });
+    if (!raw) return null;
+    return raw.map((row: any) => ({
+      name: String(row.name ?? ""),
+      category: inferCategory(String(row.name ?? "")),
+      revenue: Number.isFinite(+row.revenue) ? +row.revenue : 0,
+      qty: Number.isFinite(+row.units_sold) ? +row.units_sold : (Number.isFinite(+row.qty) ? +row.qty : 0),
+    })) as TopItem[];
   },
 
-  async revenueTrend(params: CommonParams, _range: RangeKey): Promise<RevenuePoint[]> {
-    const url = new URL("/api/analytics/revenue-trend", API_BASE);
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? "")));
-    return fetch(url).then(json);
+  // Handovers
+  async listHandovers(args: { tenant: string; limit?: number; offset?: number }) {
+    return await get<any[]>(`/api/handover`, {
+      tenant: args.tenant,
+      query: { limit: args.limit ?? 10, offset: args.offset ?? 0 },
+    });
+  },
+  async createHandover(args: { tenant: string; date: string; outlet: string; shift?: string; covers?: number }) {
+    return await post<any>(`/api/handover`, { date: args.date, outlet: args.outlet, shift: args.shift, covers: args.covers }, { tenant: args.tenant });
+  },
+  async updateHandover(args: { tenant: string; id: number; date?: string; outlet?: string; shift?: string; covers?: number }) {
+    try {
+      const url = `${API_BASE}/api/handover/${args.id}`;
+      const token = getToken();
+      const r = await fetch(url, {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+          "X-Tenant": args.tenant || DEFAULT_TENANT,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ date: args.date, outlet: args.outlet, shift: args.shift, covers: args.covers }),
+      });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch {
+      return null;
+    }
   },
 
-  async topItems(params: CommonParams & { limit?: number }): Promise<TopItem[]> {
-    const url = new URL("/api/analytics/top-items", API_BASE);
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v ?? "")));
-    return fetch(url).then(json);
+  // Incidents
+  async incidents(args: { tenant: string; limit?: number; offset?: number; status?: string[] }) {
+    const query: any = { limit: args.limit ?? 20, offset: args.offset ?? 0 };
+    if (args.status && args.status.length) query.status = args.status;
+    const rows = await get<any[]>(`/api/incidents`, { tenant: args.tenant, query });
+    if (!rows) return null;
+    return rows.map((r: any) => ({
+      id: r.id,
+      when: r.created_at || r.when,
+      severity: r.severity,
+      summary: r.title || r.summary,
+      status: r.status,
+      reported_by: r.reported_by,
+    }));
   },
+  async createIncident(args: { tenant: string; outlet: string; title: string; severity?: string; status?: string }) {
+    return await post<any>(`/api/incidents`, { outlet: args.outlet, title: args.title, severity: args.severity, status: args.status }, { tenant: args.tenant });
+  },
+  async updateIncident(args: { tenant: string; id: number; outlet?: string; title?: string; severity?: string; status?: string }) {
+    try {
+      const url = `${API_BASE}/api/incidents/${args.id}`;
+      const token = getToken();
+      const r = await fetch(url, {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+          "X-Tenant": args.tenant || DEFAULT_TENANT,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ outlet: args.outlet, title: args.title, severity: args.severity, status: args.status }),
+      });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch {
+      return null;
+    }
+  },
+
+  // Checklists
+  async listChecklistTemplates() {
+    return await get<any[]>(`/api/checklists/templates`);
+  },
+  async createChecklistTemplate(payload: { name: string; schema: any }) {
+    return await post<any>(`/api/checklists/templates`, payload);
+  },
+  async submitChecklistResponse(payload: { template_id: number; answers: any; filled_by?: string; location?: string }) {
+    return await post<any>(`/api/checklists/responses`, payload);
+  },
+
+  // Fleet
+  async listVehicles(args?: { tenant?: string }) {
+    return await get<any[]>(`/api/fleet/vehicles`, { tenant: args?.tenant });
+  },
+  async listBookings(args?: { tenant?: string; limit?: number; vehicle_id?: number; date_from?: string; date_to?: string }) {
+    return await get<any[]>(`/api/fleet/bookings`, {
+      tenant: args?.tenant,
+      query: {
+        limit: args?.limit ?? 50,
+        vehicle_id: args?.vehicle_id,
+        date_from: args?.date_from,
+        date_to: args?.date_to,
+      },
+    });
+  },
+  async createBooking(payload: { vehicle_id: number; start_at: string; end_at: string; booked_by: string; purpose?: string }) {
+    return await post<any>(`/api/fleet/bookings`, payload);
+  },
+  async createVehicle(payload: { reg: string; make: string; model: string }) {
+    return await post<any>(`/api/fleet/vehicles`, payload);
+  },
+  async updateVehicle(payload: { id: number; reg?: string; make?: string; model?: string; status?: string }) {
+    try {
+      const url = `${API_BASE}/api/fleet/vehicles/${payload.id}`;
+      const token = getToken();
+      const r = await fetch(url, {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ reg: payload.reg, make: payload.make, model: payload.model, status: payload.status }),
+      });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch {
+      return null;
+    }
+  },
+
+  // Guest Notes
+  async guestNotes(args: { tenant: string; date_from?: string; date_to?: string }) {
+    return await get<any[]>(`/api/guest-notes`, { tenant: args.tenant, query: { date_from: args.date_from, date_to: args.date_to } });
+  },
+  async createGuestNote(payload: { when?: string; author?: string; text: string; room?: string; status?: string }) {
+    return await post<any>(`/api/guest-notes`, payload);
+  },
+
+  // CAPA
+  async createAction(payload: { incident_id: number; title: string; owner?: string; due_date?: string }) {
+    return await post<any>(`/api/capa/actions`, payload);
+  },
+  async listActions() {
+    return await get<any[]>(`/api/capa/actions`);
+  },
+
+  // Spa
+  async listTherapists() { return await get<any[]>(`/api/spa/therapists`); },
+  async listTreatments() { return await get<any[]>(`/api/spa/treatments`); },
+  async createTherapist(payload: { name: string }) { return await post<any>(`/api/spa/therapists`, payload); },
+  async createTreatment(payload: { name: string; duration_min?: number }) { return await post<any>(`/api/spa/treatments`, payload); },
+  async createVisit(payload: { when?: string; guest_name?: string; therapist_id?: number; treatment_id?: number; upgrade?: string; occasion?: string; feedback?: string; amount?: number }) { return await post<any>(`/api/spa/visits`, payload); },
+  async listVisits() { return await get<any[]>(`/api/spa/visits`); },
+  // Finance
+  async addRevenueEntry(args: { tenant?: string; category: string; amount: number; occurred_at?: string; description?: string }) {
+    return await post<any>(`/api/finance/revenue`, { category: args.category, amount: args.amount, occurred_at: args.occurred_at, description: args.description }, { tenant: args.tenant });
+  },
+  // Concierge
+  async conciergeList(args: { tenant?: string; date_from?: string; date_to?: string }) {
+    return await get<any[]>(`/api/concierge`, { tenant: args.tenant, query: { date_from: args.date_from, date_to: args.date_to } });
+  },
+  async conciergeCreate(args: { tenant?: string; text: string; author?: string; tags?: string; when_ts?: string }) {
+    return await post<any>(`/api/concierge`, { text: args.text, author: args.author, tags: args.tags, when_ts: args.when_ts }, { tenant: args.tenant });
+  },
+  
+  // Uploads
+  async uploadSales(args: { tenant: string; file: File; mapping?: Record<string, string> }) {
+    const fd = new FormData();
+    fd.append("file", args.file);
+    fd.append("mapping", JSON.stringify(args.mapping || {}));
+    const token = getToken();
+    const r = await fetch(`${API_BASE}/api/uploads/sales`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+        "X-Tenant": args.tenant || DEFAULT_TENANT,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: fd,
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  },
+  async listUploads(args?: { tenant?: string; limit?: number }) {
+    return await get<{ items: Array<{ id: number; filename: string; status: string; rows_total: number; rows_ok: number; rows_failed: number; created_at?: string; completed_at?: string }> }>(`/api/uploads`, {
+      tenant: args?.tenant,
+      query: { limit: args?.limit ?? 20 },
+    });
+  },
+  async getUpload(args: { tenant: string; id: number }) {
+    return await get<{ id: number; filename: string; status: string; rows_total: number; rows_ok: number; rows_failed: number; created_at?: string; completed_at?: string; error_log?: string }>(`/api/uploads/${args.id}`, { tenant: args.tenant });
+  },
+  // Admin
+  async adminSeedAll(args: { tenant: string; days?: number }) {
+    const token = getToken();
+    const usp = new URLSearchParams();
+    if (args.days) usp.set("days", String(args.days));
+    const r = await fetch(`${API_BASE}/api/admin/seed-all${usp.toString() ? `?${usp.toString()}` : ""}` , {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+        "X-Tenant": args.tenant || DEFAULT_TENANT,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  },
+  
+  // Rooms`n// Rooms
+  async listRooms(args?: { tenant?: string }) {
+    return await get<any[]>(`/api/rooms`, { tenant: args?.tenant });
+  },
+  async createRoom(args: { tenant?: string; name: string }) {
+    return await post<any>(`/api/rooms`, { name: args.name }, { tenant: args.tenant });
+  },
+  async listRoomBookings(args?: { tenant?: string; room_id?: number; limit?: number; date_from?: string; date_to?: string }) {
+    return await get<any[]>(`/api/rooms/bookings`, { tenant: args?.tenant, query: { room_id: args?.room_id, limit: args?.limit ?? 100, date_from: args?.date_from, date_to: args?.date_to } });
+  },
+  async createRoomBooking(args: { tenant?: string; room_id: number; start?: string; end?: string; start_at?: string; duration?: string; purpose?: string; booked_by?: string; amount?: number }) {
+    // Accept either start+end or start_at+duration
+    const body: any = args.start && args.end
+      ? { room_id: args.room_id, start: args.start, end: args.end, purpose: args.purpose, booked_by: args.booked_by, amount: args.amount }
+      : { room_id: args.room_id, start_at: args.start_at, duration: args.duration, purpose: args.purpose, booked_by: args.booked_by, amount: args.amount };
+    return await post<any>(`/api/rooms/bookings`, body, { tenant: args.tenant });
+  },
+  async checkRoomAvailability(args: { tenant?: string; room_id: number; start: string; end: string }) {
+    try {
+      const token = getToken();
+      const r = await fetch(`${API_BASE}/api/rooms/bookings/availability`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+          "X-Tenant": args.tenant || DEFAULT_TENANT,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ room_id: args.room_id, start: args.start, end: args.end }),
+      });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async updateRoom(args: { tenant?: string; id: number; status?: string; housekeeping_status?: string; out_of_order?: boolean }) {
+    try {
+      const token = getToken();
+      const r = await fetch(`${API_BASE}/api/rooms/${args.id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+          "X-Tenant": args.tenant || DEFAULT_TENANT,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ status: args.status, housekeeping_status: args.housekeeping_status, out_of_order: args.out_of_order })
+      });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async listRoomUpcoming(args: { tenant?: string; hours?: number }) {
+    return await get<any[]>(`/api/rooms/upcoming`, { tenant: args.tenant, query: { hours: args.hours ?? 48 } });
+  },
+  async roomSummary(args: { tenant?: string }) { return await get<any>(`/api/rooms/summary`, { tenant: args.tenant }); },
+  async checkInBooking(args: { tenant?: string; id: number }) {
+    try {
+      const token = getToken();
+      const r = await fetch(`${API_BASE}/api/rooms/bookings/${args.id}/check-in`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+          "X-Tenant": args.tenant || DEFAULT_TENANT,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async checkOutBooking(args: { tenant?: string; id: number }) {
+    try {
+      const token = getToken();
+      const r = await fetch(`${API_BASE}/api/rooms/bookings/${args.id}/check-out`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+          "X-Tenant": args.tenant || DEFAULT_TENANT,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async listHousekeepingTasks(args: { tenant?: string; room_id?: number; status?: string }) {
+    return await get<any[]>(`/api/rooms/housekeeping/tasks`, { tenant: args.tenant, query: { room_id: args.room_id, status: args.status } });
+  },
+  async completeHousekeepingTask(args: { tenant?: string; id: number }) {
+    try {
+      const token = getToken();
+      const r = await fetch(`${API_BASE}/api/rooms/housekeeping/tasks/${args.id}/complete`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+          "X-Tenant": args.tenant || DEFAULT_TENANT,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async addRevenueEntry(args: { tenant?: string; category: string; amount: number; occurred_at?: string; description?: string }) {
+    return await post<any>(`/api/finance/revenue`, { category: args.category, amount: args.amount, occurred_at: args.occurred_at, description: args.description }, { tenant: args.tenant });
+  },
+  async uploadSales(args: { tenant?: string; file: File; mapping: any }) {
+    const form = new FormData(); form.append('file', args.file); form.append('mapping', JSON.stringify(args.mapping||{}));
+    try {
+      const token = getToken();
+      const r = await fetch(`${API_BASE}/api/uploads/sales`, { method:'POST', credentials:'include', headers: { 'X-Tenant-ID': args.tenant || DEFAULT_TENANT, 'X-Tenant': args.tenant || DEFAULT_TENANT, ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: form });
+      if (!r.ok) return null; return await r.json();
+    } catch { return null; }
+  },// Events
+  async listEvents(args: { tenant?: string; date_from?: string; date_to?: string }) {
+    return await get<any[]>(`/api/events`, { tenant: args.tenant, query: { date_from: args.date_from, date_to: args.date_to } });
+  },
+  async createEvent(args: { tenant?: string; at: string; label: string }) {
+    return await post<any>(`/api/events`, { at: args.at, label: args.label }, { tenant: args.tenant });
+  },
+  // Hotel analytics (tenant-scoped)
+  async hotelKpis(args: { tenant: string; date_from: string; date_to: string }) {
+    return await get<any>(`/api/analytics/hotel-kpis`, { tenant: args.tenant, query: { date_from: args.date_from, date_to: args.date_to } });
+  },
+  async deptSplit(args: { tenant: string; date_from: string; date_to: string }) {
+    return await get<any[]>(`/api/analytics/dept-split`, { tenant: args.tenant, query: { date_from: args.date_from, date_to: args.date_to } });
+  },
+  // Targets
+  async listTargets(args?: { tenant?: string }) { return await get<any[]>(`/api/analytics/targets`, { tenant: args?.tenant }); },
+  async upsertTarget(args: { tenant?: string; dept: string; target: number }) { return await post<any>(`/api/analytics/targets`, { dept: args.dept, target: args.target }, { tenant: args.tenant }); },
 };
 
-export type { KpiSummary as TKpiSummary, RevenuePoint as TRevenuePoint, TopItem as TTopItem };
+/* High-level + fallback */
+export async function fetchDashboard(tenant: string, date_from: string, date_to: string, target = 10000) {
+  const [k, t, top] = await Promise.all([
+    api.kpiSummary({ tenant, date_from, date_to, target }),
+    api.revenueTrend({ tenant, date_from, date_to }),
+    api.topItems({ tenant, date_from, date_to, limit: 5 }),
+  ]);
+
+  const trend = isEmpty(t || []) ? demoTrend(date_from, date_to) : (t as RevenuePoint[]);
+  const topItems = isEmpty(top || []) ? demoTop : (top as TopItem[]);
+  const kpi = isZeroKpi(k) ? demoKpi(trend, target) : (k as KpiSummary);
+  return { kpi, trend, topItems };
+}
+
+// Simple heuristic to infer Food vs Beverage by name
+const BEV_HINTS = [
+  "beer","lager","ipa","stout","ale","cider",
+  "wine","merlot","cab","cabernet","pinot","chardonnay",
+  "cocktail","margarita","mojito","martini","negroni",
+  "soda","cola","sprite","pop",
+  "coffee","latte","cappuccino","americano","espresso",
+  "tea","matcha","chai",
+  "juice","water","sparkling","lemonade",
+];
+function inferCategory(name: string): "Food" | "Beverage" {
+  const n = (name || "").toLowerCase();
+  return BEV_HINTS.some(h => n.includes(h)) ? "Beverage" : "Food";
+}
+
+
+
+
+

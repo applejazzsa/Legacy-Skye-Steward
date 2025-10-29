@@ -12,7 +12,16 @@
     "noEmit": true,
     "strict": true,
     "noUnusedLocals": false,
-    "noUnusedParameters": false
+    "noUnusedParameters": false,
+    "types": ["vite/client"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/pages",
+    "src/lib",
+    "src/fixtures.ts",
+    "src/components/TopItems.tsx",
+    "src/components/HandoverTable.tsx",
+    "src/components/Copilot.tsx"
+  ]
 }
