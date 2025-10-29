@@ -41,16 +41,28 @@ export default function WeeklyLine({ data, events }: Props) {
     </circle>
   ));
 
+  // Event badges + labels with very light collision avoidance
+  const labelSlots: Array<{ x: number; y: number }> = [];
   const badges = (events || []).map((e, idx) => {
-    const d = clean.findIndex(p => String(p.date) === (e.at || '').slice(0,10));
+    const d = clean.findIndex((p) => String(p.date) === (e.at || "").slice(0, 10));
     if (d < 0) return null;
     const cx = x(d);
-    const cy = y(clean[d].value) - 10;
+    let cy = y(clean[d].value) - 10;
+    // nudge vertically if another label is too close horizontally
+    for (const s of labelSlots) {
+      if (Math.abs(s.x - cx) < 40 && Math.abs(s.y - cy) < 14) {
+        cy -= 14; // stack upward
+      }
+    }
+    labelSlots.push({ x: cx, y: cy });
     return (
       <g key={`ev-${idx}`}>
         <circle cx={cx} cy={cy} r={4.5} fill="#f59e0b">
           <title>{e.label}</title>
         </circle>
+        <text x={cx + 6} y={cy + 4} fontSize={10} fill="#f59e0b" aria-hidden="true">
+          {e.label}
+        </text>
       </g>
     );
   });

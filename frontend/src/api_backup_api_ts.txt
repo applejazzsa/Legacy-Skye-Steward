@@ -326,7 +326,7 @@ export const api = {
     return await r.json();
   },
   
-  // Rooms`n// Rooms
+  // Rooms
   async listRooms(args?: { tenant?: string }) {
     return await get<any[]>(`/api/rooms`, { tenant: args?.tenant });
   },
@@ -336,30 +336,26 @@ export const api = {
   async listRoomBookings(args?: { tenant?: string; room_id?: number; limit?: number; date_from?: string; date_to?: string }) {
     return await get<any[]>(`/api/rooms/bookings`, { tenant: args?.tenant, query: { room_id: args?.room_id, limit: args?.limit ?? 100, date_from: args?.date_from, date_to: args?.date_to } });
   },
-  async createRoomBooking(args: { tenant?: string; room_id: number; start?: string; end?: string; start_at?: string; duration?: string; purpose?: string; booked_by?: string; amount?: number }) {
-    // Accept either start+end or start_at+duration
-    const body: any = args.start && args.end
-      ? { room_id: args.room_id, start: args.start, end: args.end, purpose: args.purpose, booked_by: args.booked_by, amount: args.amount }
-      : { room_id: args.room_id, start_at: args.start_at, duration: args.duration, purpose: args.purpose, booked_by: args.booked_by, amount: args.amount };
-    return await post<any>(`/api/rooms/bookings`, body, { tenant: args.tenant });
-  },
+  async createRoomBooking(args: { tenant?: string; room_id: number; start_at: string; duration: string; purpose?: string; booked_by?: string; amount?: number }) {
+    return await post<any>(`/api/rooms/bookings`, { room_id: args.room_id, start_at: args.start_at, duration: args.duration, purpose: args.purpose, booked_by: args.booked_by, amount: args.amount },
   async checkRoomAvailability(args: { tenant?: string; room_id: number; start: string; end: string }) {
     try {
       const token = getToken();
-      const r = await fetch(`${API_BASE}/api/rooms/bookings/availability`, {
+      const r = await fetch(${API_BASE}/api/rooms/bookings/availability, {
         method: "POST",
         credentials: "include",
         headers: {
           "Content-Type": "application/json",
           "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
           "X-Tenant": args.tenant || DEFAULT_TENANT,
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...(token ? { Authorization: Bearer  } : {}),
         },
         body: JSON.stringify({ room_id: args.room_id, start: args.start, end: args.end }),
       });
       if (!r.ok) return null;
       return await r.json();
     } catch { return null; }
+  }, { tenant: args.tenant });
   },
   async updateRoom(args: { tenant?: string; id: number; status?: string; housekeeping_status?: string; out_of_order?: boolean }) {
     try {
@@ -434,17 +430,41 @@ export const api = {
       return await r.json();
     } catch { return null; }
   },
-  async addRevenueEntry(args: { tenant?: string; category: string; amount: number; occurred_at?: string; description?: string }) {
-    return await post<any>(`/api/finance/revenue`, { category: args.category, amount: args.amount, occurred_at: args.occurred_at, description: args.description }, { tenant: args.tenant });
-  },
-  async uploadSales(args: { tenant?: string; file: File; mapping: any }) {
-    const form = new FormData(); form.append('file', args.file); form.append('mapping', JSON.stringify(args.mapping||{}));
+  async markOutOfOrder(args: { tenant?: string; id: number; reason: string; eta?: string }) {
     try {
       const token = getToken();
-      const r = await fetch(`${API_BASE}/api/uploads/sales`, { method:'POST', credentials:'include', headers: { 'X-Tenant-ID': args.tenant || DEFAULT_TENANT, 'X-Tenant': args.tenant || DEFAULT_TENANT, ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: form });
-      if (!r.ok) return null; return await r.json();
+      const r = await fetch(`${API_BASE}/api/rooms/${args.id}/out-of-order`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+          "X-Tenant": args.tenant || DEFAULT_TENANT,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ reason: args.reason, eta: args.eta }),
+      });
+      if (!r.ok) return null;
+      return await r.json();
     } catch { return null; }
-  },// Events
+  },
+  async backInService(args: { tenant?: string; id: number }) {
+    try {
+      const token = getToken();
+      const r = await fetch(`${API_BASE}/api/rooms/${args.id}/back-in-service`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "X-Tenant-ID": args.tenant || DEFAULT_TENANT,
+          "X-Tenant": args.tenant || DEFAULT_TENANT,
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  // Events
   async listEvents(args: { tenant?: string; date_from?: string; date_to?: string }) {
     return await get<any[]>(`/api/events`, { tenant: args.tenant, query: { date_from: args.date_from, date_to: args.date_to } });
   },

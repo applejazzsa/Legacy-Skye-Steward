@@ -20,6 +20,7 @@ from .api import rooms
 from .api import events
 from .api import targets
 from .api import finance
+from .api import concierge
 
 app = FastAPI(title="Legacy Skye Steward API")
 
@@ -53,6 +54,7 @@ app.include_router(rooms.router, dependencies=protected_deps)
 app.include_router(events.router, dependencies=protected_deps)
 app.include_router(targets.router, dependencies=protected_deps)
 app.include_router(finance.router, dependencies=protected_deps)
+app.include_router(concierge.router, dependencies=protected_deps)
 
 @app.get("/healthz")
 def healthz():

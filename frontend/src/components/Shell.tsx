@@ -1,4 +1,4 @@
-// feat(ui): tidy spacing and move account/logout into sticky header
+// feat(shell): clean sticky header, tabs, controls, logout button; remove duplicate blocks
 import React, { useEffect, useMemo, useState } from "react";
 import { useAppStore } from "../store";
 import { useAuth } from "../auth";
@@ -6,7 +6,18 @@ import Select from "../atom/Select";
 import UploadWizard from "./UploadWizard";
 import { api } from "../api";
 
-type TabKey = "dashboard" | "handovers" | "incidents" | "checklists" | "spa" | "fleet" | "notes";
+type TabKey =
+  | "dashboard"
+  | "handovers"
+  | "incidents"
+  | "checklists"
+  | "spa"
+  | "fleet"
+  | "rooms"
+  | "concierge"
+  | "reports"
+  | "notes"
+  | "settings";
 
 export default function Shell({ tab, onTabChange, children }: { tab: TabKey; onTabChange: (t: TabKey) => void; children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -35,6 +46,20 @@ export default function Shell({ tab, onTabChange, children }: { tab: TabKey; onT
     return match?.role || undefined;
   }, [user, tenant]);
 
+  const tabs: { k: TabKey; t: string }[] = [
+    { k: "dashboard", t: "Dashboard" },
+    { k: "handovers", t: "Handovers" },
+    { k: "incidents", t: "Incidents" },
+    { k: "checklists", t: "Checklists" },
+    { k: "spa", t: "Spa" },
+    { k: "fleet", t: "Fleet" },
+    { k: "rooms", t: "Rooms" },
+    { k: "concierge", t: "Concierge" },
+    { k: "reports", t: "Reports" },
+    { k: "notes", t: "Notes" },
+  ];
+  if (activeRole && (activeRole === "owner" || activeRole === "manager")) tabs.push({ k: "settings", t: "Settings" });
+
   const rangeOptions = [
     { label: "Last 7 days", value: "7d" as const },
     { label: "Last 14 days", value: "14d" as const },
@@ -49,27 +74,12 @@ export default function Shell({ tab, onTabChange, children }: { tab: TabKey; onT
   return (
     <div className="app">
       <header className="topbar sticky" aria-label="App header with navigation and controls">
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div className="brand">
-            <strong>Legacy Skye</strong> <span className="muted">Steward</span>
-          </div>
-          <nav className="tabs" aria-label="Primary">
-            {([
-              { k: "dashboard", t: "Dashboard" },
-              { k: "handovers", t: "Handovers" },
-              { k: "incidents", t: "Incidents" },
-              { k: "checklists", t: "Checklists" },
-              { k: "spa", t: "Spa" },
-              { k: "fleet", t: "Fleet" },
-              { k: "rooms", t: "Rooms" },
-              { k: "notes", t: "Notes" },
-            ] as { k: TabKey; t: string }[]).map(({ k, t }) => (
-              <button key={k} className={tab === k ? "active" : ""} onClick={() => onTabChange(k)} aria-current={tab === k ? "page" : undefined}>
-                {t}
-              </button>
-            ))}
-          </nav>
-        </div>
+        <div className="brand"><strong>Legacy Skye</strong> <span className="muted">Steward</span></div>
+        <nav className="tabs" aria-label="Primary">
+          {tabs.map(({ k, t }) => (
+            <button key={k} className={tab === k ? "active" : ""} onClick={() => onTabChange(k)} aria-current={tab === k ? "page" : undefined}>{t}</button>
+          ))}
+        </nav>
         <div className="header-controls" aria-label="Account controls" style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span className="muted" style={{ fontSize: 12 }}>{user?.email || ""}</span>
           <button onClick={logout} aria-label="Logout">Logout</button>
@@ -98,7 +108,7 @@ export default function Shell({ tab, onTabChange, children }: { tab: TabKey; onT
             <span className="label">Shortcuts</span>
             <span className="muted">/ focus • Cmd/Ctrl+K palette</span>
           </div>
-          {activeRole && (activeRole === "owner" || activeRole === "manager") && (
+          {(activeRole === "owner" || activeRole === "manager") && (
             <div className="control" style={{ marginLeft: "auto" }}>
               <label htmlFor="upload-sales" className="label" style={{ position: "absolute", left: -10000 }}>Upload Sales CSV</label>
               <input id="upload-sales" type="file" accept=".csv" style={{ display: "none" }} onChange={async (e) => {
@@ -116,7 +126,6 @@ export default function Shell({ tab, onTabChange, children }: { tab: TabKey; onT
               </button>
             </div>
           )}
-          {/* Account controls moved to sticky header */}
         </div>
 
         {children}
@@ -132,7 +141,6 @@ export default function Shell({ tab, onTabChange, children }: { tab: TabKey; onT
 }
 
 function fmtTime(d: Date) {
-  // Africa/Johannesburg formatting, fallback to locale if tz not supported
   try {
     return new Intl.DateTimeFormat("en-ZA", {
       hour: "2-digit", minute: "2-digit", second: "2-digit",
